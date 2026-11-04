@@ -1,0 +1,26 @@
+#!/bin/sh
+# git-guard：推送前检查（远端白名单 / SSH 私钥权限 / 待推送提交与文件）
+# 安装：pnpm hooks:install    紧急跳过：GIT_GUARD_SKIP=1 git push ...
+# 规则说明：docs/GIT_COMMIT_RULES.md
+set -u
+
+if [ "${GIT_GUARD_SKIP:-}" = "1" ]; then
+  echo "git-guard: 已通过 GIT_GUARD_SKIP=1 跳过推送前检查" >&2
+  exit 0
+fi
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+GUARD="$ROOT/tools/git-guard/check.mjs"
+
+[ -f "$GUARD" ] || {
+  echo "git-guard: 未找到 $GUARD，跳过检查" >&2
+  exit 0
+}
+
+command -v node >/dev/null 2>&1 || {
+  echo "git-guard: 未检测到 node，跳过检查（建议安装 Node.js >= 20）" >&2
+  exit 0
+}
+
+# $1 = 远端名，$2 = 远端 URL；标准输入为待推送引用列表
+exec node "$GUARD" --pre-push "$1" "${2:-}"

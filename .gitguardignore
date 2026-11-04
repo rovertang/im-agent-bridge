@@ -1,0 +1,21 @@
+# git-guard 例外配置（随仓库版本管理）
+#
+# 只有当检查确实误报时才在这里放行，且务必写清原因，不要把「真实密钥」放行。
+# 语法（每行一条，`#` 开头为注释）：
+#
+#   rule:<规则id>        全局关闭某条规则（规则 id 见 `node tools/git-guard/check.mjs --list-rules`）
+#   path:<glob>          跳过匹配路径的内容扫描（仍会检查文件名规则）
+#   line:<子串>          跳过包含该子串的行
+#   remote:<正则>        额外允许推送的远端地址（默认只允许 origin）
+#   email:<地址>         允许出现的邮箱地址
+#   home-user:<用户名>   允许出现在绝对路径中的用户名
+#   max-bytes:<字节数>   单个文件大小上限（默认 2097152，即 2 MiB）
+#
+# 示例：给某个测试样本目录放行，并补一个允许的邮箱
+#   path:tests/fixtures/**
+#   email:oss@example.com
+#   rule:privacy/private-ip
+#
+# 本仓库当前无需任何例外；以下保留示例，取消注释即可生效。
+#   path:tests/fixtures/secrets/**
+#   line:this-is-a-documented-placeholder

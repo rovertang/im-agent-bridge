@@ -461,6 +461,20 @@ pnpm typecheck
 pnpm build
 ```
 
+### 提交规则与密钥检查
+
+每次 `git commit` / `git push` 都会自动执行 `tools/git-guard`（零依赖脚本）：检查密钥、私钥、
+敏感文件、个人隐私信息、文件权限和推送目标。钩子文件在 `.githooks/` 中随仓库管理，每个克隆
+执行一次安装：
+
+```bash
+pnpm hooks:install        # 或：node tools/git-guard/install.mjs
+pnpm git:self-test        # 规则自检
+pnpm git:check            # 全仓库扫描
+```
+
+完整规则、绕过策略与误报处理见 [`docs/GIT_COMMIT_RULES.md`](docs/GIT_COMMIT_RULES.md)。
+
 `pnpm test` 覆盖单元、集成和进程级适配器测试。DSH 后端新增了针对性测试：
 
 | 测试 | 覆盖内容 |

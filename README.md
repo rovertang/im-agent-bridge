@@ -497,6 +497,20 @@ pnpm typecheck
 pnpm build
 ```
 
+### Commit hooks and secret scanning
+
+Every `git commit` / `git push` runs `tools/git-guard` — a zero-dependency check for secrets,
+private keys, sensitive files, personal data, file permissions and the push target. Install the
+hooks once per clone (they live in `.githooks/`, which is versioned):
+
+```bash
+pnpm hooks:install        # or: node tools/git-guard/install.mjs
+pnpm git:self-test        # rule self-test
+pnpm git:check            # full-repository scan
+```
+
+Rules, bypass policy and false-positive handling: [`docs/GIT_COMMIT_RULES.md`](docs/GIT_COMMIT_RULES.md).
+
 `pnpm test` includes unit, integration, and process-level adapter tests. The DSH backend adds focused
 coverage:
 

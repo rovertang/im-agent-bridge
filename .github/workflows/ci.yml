@@ -37,3 +37,22 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  git-guard:
+    name: git-guard（隐私 / 密钥 / 敏感信息扫描）
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Self-test rules
+        run: node tools/git-guard/check.mjs --self-test
+
+      - name: Scan repository
+        run: node tools/git-guard/check.mjs --all

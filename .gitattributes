@@ -1,0 +1,74 @@
+# 行尾与二进制策略
+#
+# 背景：本仓库曾从 Windows 电脑整体复制到 Linux，Windows 的 core.autocrlf=true
+# 让工作区变成 CRLF，而仓库内是 LF，导致「272 个文件被修改、5.7 万行增删」的假象。
+# 这里显式声明策略，避免再次发生：
+#   - 仓库内一律以 LF 存储
+#   - 需要强制 LF 的文本显式声明（脚本、钩子、配置、文档）
+#   - Windows 专用脚本保持 CRLF
+#   - 二进制文件不参与行尾转换
+* text=auto
+
+# 强制 LF
+*.sh         text eol=lf
+*.bash       text eol=lf
+*.mjs        text eol=lf
+*.cjs        text eol=lf
+*.js         text eol=lf
+*.jsx        text eol=lf
+*.ts         text eol=lf
+*.tsx        text eol=lf
+*.json       text eol=lf
+*.jsonc      text eol=lf
+*.md         text eol=lf
+*.yml        text eol=lf
+*.yaml       text eol=lf
+*.css        text eol=lf
+*.html       text eol=lf
+*.svg        text eol=lf
+*.txt        text eol=lf
+*.toml       text eol=lf
+*.ini        text eol=lf
+*.gitignore  text eol=lf
+*.gitattributes text eol=lf
+*.editorconfig text eol=lf
+.githooks/*  text eol=lf
+pnpm-lock.yaml text eol=lf
+
+# Windows 专用脚本保持 CRLF
+*.bat        text eol=crlf
+*.cmd        text eol=crlf
+*.ps1        text eol=crlf
+
+# 二进制文件
+*.png        binary
+*.jpg        binary
+*.jpeg       binary
+*.gif        binary
+*.webp       binary
+*.ico        binary
+*.icns       binary
+*.bmp        binary
+*.tiff       binary
+*.woff       binary
+*.woff2      binary
+*.ttf        binary
+*.otf        binary
+*.eot        binary
+*.pdf        binary
+*.zip        binary
+*.gz         binary
+*.tgz        binary
+*.tar        binary
+*.jar        binary
+*.7z         binary
+*.exe        binary
+*.dll        binary
+*.so         binary
+*.dylib      binary
+*.node       binary
+*.wasm       binary
+*.mp3        binary
+*.mp4        binary
+*.mov        binary
+*.webm       binary

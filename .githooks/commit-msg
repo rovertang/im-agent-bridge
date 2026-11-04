@@ -1,0 +1,18 @@
+#!/bin/sh
+# git-guard：提交信息检查（防止在 commit message 里粘贴密钥 / 内网信息）
+# 安装：pnpm hooks:install    紧急跳过：GIT_GUARD_SKIP=1 git commit ...
+# 规则说明：docs/GIT_COMMIT_RULES.md
+set -u
+
+if [ "${GIT_GUARD_SKIP:-}" = "1" ]; then
+  echo "git-guard: 已通过 GIT_GUARD_SKIP=1 跳过提交信息检查" >&2
+  exit 0
+fi
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+GUARD="$ROOT/tools/git-guard/check.mjs"
+
+[ -f "$GUARD" ] || exit 0
+command -v node >/dev/null 2>&1 || exit 0
+
+exec node "$GUARD" --commit-msg "$1"

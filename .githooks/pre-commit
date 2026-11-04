@@ -1,0 +1,20 @@
+#!/bin/sh
+# git-guard：提交前检查（隐私 / 权限 / 密钥 / 敏感信息）
+# 安装：pnpm hooks:install    紧急跳过：GIT_GUARD_SKIP=1 git commit ...
+# 规则说明：docs/GIT_COMMIT_RULES.md
+set -u
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+GUARD="$ROOT/tools/git-guard/check.mjs"
+
+[ -f "$GUARD" ] || {
+  echo "git-guard: 未找到 $GUARD，跳过检查" >&2
+  exit 0
+}
+
+command -v node >/dev/null 2>&1 || {
+  echo "git-guard: 未检测到 node，跳过检查（建议安装 Node.js >= 20）" >&2
+  exit 0
+}
+
+exec node "$GUARD" --staged
