@@ -16,6 +16,12 @@ export async function writeLarkCliSourceProjection(
     | 'secretsGetterScript'
   >,
 ): Promise<string> {
+  // Only lark profiles have app credentials to project; callers must gate on
+  // the channel kind first (weixin profiles never run lark-cli).
+  const app = cfg.accounts?.app;
+  if (!app) {
+    throw new Error('lark-cli source projection requires a lark profile with accounts.app');
+  }
   await mkdir(appPaths.larkCliSourceDir, { recursive: true, mode: 0o700 });
   await chmod(appPaths.larkCliSourceDir, 0o700).catch(() => {});
 
@@ -23,9 +29,9 @@ export async function writeLarkCliSourceProjection(
   const projection = {
     accounts: {
       app: {
-        id: cfg.accounts.app.id,
-        secret: cfg.accounts.app.secret,
-        tenant: cfg.accounts.app.tenant,
+        id: app.id,
+        secret: app.secret,
+        tenant: app.tenant,
       },
     },
     ...(secrets ? { secrets } : {}),

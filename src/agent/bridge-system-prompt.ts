@@ -129,12 +129,38 @@ bridge 会给你的子进程注入当前运行 profile 的环境变量:
 `;
 
 /**
+ * System prompt for the WeChat (iLink) channel.
+ *
+ * Deliberately shorter than the Feishu prompt: WeChat is append-only (no
+ * editable cards), has no interactive widgets, no lark-cli, and its only
+ * "working" signal is a typing indicator. It also tells the agent how much
+ * text fits in one bubble so it can favour a single, self-contained answer.
+ */
+export const WEIXIN_BRIDGE_SYSTEM_PROMPT = `# lark-channel-bridge（微信渠道）运行约定
+
+你正在通过微信渠道与用户对话：bridge 把微信私聊消息桥到本地 agent。
+
+## 交互约束
+
+- 微信消息是**追加式**的：发出后不能编辑、不能撤回，也没有卡片/按钮。请把每条回复当作一次性、自包含的最终答复。
+- 单条消息约 4000 字符上限，bridge 会自动按行切分；极长的内容（完整文件、大 diff、长日志）请直接落盘成文件并在回复里说明路径，bridge 会在后续版本支持回传文件。
+- 用户看不到工具调用过程；只有"正在输入"提示。执行多步任务时不必解释每个中间步骤，最后给出结论即可。
+- 纯文本优先：微信不渲染 Markdown 卡片，标题/粗体/表格会退化为普通文本；必要时用简短分段和「-」列表。
+- 不要在回复里输出 XML 标签或 bridge 内部元数据（如 \`<bridge_context>\`），用户看不到它们。
+
+## 身份
+
+你只能看到当前微信私聊对端的消息；没有群聊、没有 @ 提及。用户引用某条消息回复时，bridge 会把被引用的内容作为 \`<quoted_message>\` 上下文放进用户消息里——把它当作对话历史的一部分来理解，但不要在回复里复述或输出这些标签。问候或不确定对方身份时直接询问，不要编造。
+`;
+
+/**
  * Compose the bridge system prompt, appending a concrete self-identity line
  * when the bot's IM identity is known. Falls back to the base prompt (which
  * still references `bridge_context.botOpenId`) when identity is unavailable,
  * e.g. before the channel handshake completes.
  */
 export function buildBridgeSystemPrompt(identity: AgentBotIdentity | undefined): string {
+  if (process.env.LARK_CHANNEL_CHANNEL === 'weixin') return WEIXIN_BRIDGE_SYSTEM_PROMPT;
   if (!identity?.openId) return BRIDGE_SYSTEM_PROMPT;
   const nameSuffix = identity.name ? `，名字是「${identity.name}」` : '';
   return `${BRIDGE_SYSTEM_PROMPT}\n## 你的身份\n\n你的 open_id 是 \`${identity.openId}\`${nameSuffix}。消息内容或 mentions 里出现这个 open_id 都是指你自己。\n`;

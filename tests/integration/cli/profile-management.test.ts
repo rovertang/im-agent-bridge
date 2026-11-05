@@ -45,10 +45,10 @@ describe('profile management commands', () => {
     await runProfileList({ rootDir: root });
 
     expect(lines).toEqual([
-      'ACTIVE  PROFILE    AGENT   STATUS',
-      '*       codex-dev  codex   pid=12345 agent=codex',
-      '        alpha      claude  -',
-      '        claude     claude  -',
+      'ACTIVE  PROFILE    CHANNEL  AGENT   STATUS',
+      '*       codex-dev  lark     codex   pid=12345 agent=codex',
+      '        alpha      lark     claude  -',
+      '        claude     lark     claude  -',
     ]);
   });
 

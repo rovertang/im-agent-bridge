@@ -7,7 +7,7 @@ import { CallbackAuth } from '../../../src/card/callback-auth.js';
 import { CallbackNonceStore } from '../../../src/card/callback-store.js';
 import { handleCardAction } from '../../../src/card/dispatcher.js';
 import type { Controls } from '../../../src/commands/index.js';
-import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
+import { createDefaultProfileConfig, requireLarkProfile } from '../../../src/config/profile-schema.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter, type FakeAgentRun } from '../../helpers/fake-agent.js';
@@ -143,24 +143,23 @@ async function createHarness(
   const agent = new FakeAgentAdapter();
   const pending = new PendingQueue(60_000, () => {});
   const store = new CallbackNonceStore(`${tmp.profile}/callback-nonces.json`);
-  const controls = {
-    profile: 'claude',
-    profileConfig: createDefaultProfileConfig({
+  const profileConfig = requireLarkProfile(
+    createDefaultProfileConfig({
       agentKind: 'claude',
       accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
       access: { allowedChats: ['oc_group'] },
     }),
+  );
+  const controls = {
+    profile: 'claude',
+    profileConfig,
     botOwnerId: 'ou_owner',
     ownerRefreshState: 'ok',
     async refreshOwner() {},
     async restart() {},
     async exit() {},
     configPath: `${tmp.profile}/config.json`,
-    cfg: createDefaultProfileConfig({
-      agentKind: 'claude',
-      accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
-      access: { allowedChats: ['oc_group'] },
-    }),
+    cfg: profileConfig,
     processId: 'proc-1',
   } satisfies Controls;
   let nonce = 'nonce-stop';

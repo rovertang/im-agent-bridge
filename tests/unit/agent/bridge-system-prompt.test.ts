@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   BRIDGE_SYSTEM_PROMPT,
+  WEIXIN_BRIDGE_SYSTEM_PROMPT,
   buildBridgeSystemPrompt,
   prefixBridgeSystemPrompt,
 } from '../../../src/agent/bridge-system-prompt';
@@ -53,6 +54,38 @@ describe('buildBridgeSystemPrompt', () => {
 
   it('appends the identity line even when the bot name is missing', () => {
     const prompt = buildBridgeSystemPrompt({ openId: 'ou_bot_self' });
+    expect(prompt).toContain('ou_bot_self');
+  });
+});
+
+describe('weixin channel system prompt', () => {
+  let previousChannel: string | undefined;
+
+  beforeEach(() => {
+    previousChannel = process.env.LARK_CHANNEL_CHANNEL;
+  });
+
+  afterEach(() => {
+    if (previousChannel === undefined) delete process.env.LARK_CHANNEL_CHANNEL;
+    else process.env.LARK_CHANNEL_CHANNEL = previousChannel;
+  });
+
+  it('switches to the WeChat prompt (even with an identity) when the channel is weixin', () => {
+    process.env.LARK_CHANNEL_CHANNEL = 'weixin';
+
+    const prompt = buildBridgeSystemPrompt({ openId: 'ou_bot_self', name: '助手' });
+
+    expect(prompt).toBe(WEIXIN_BRIDGE_SYSTEM_PROMPT);
+    expect(prompt).not.toContain('ou_bot_self');
+    expect(prompt).toContain('<quoted_message>');
+  });
+
+  it('keeps the Lark prompt when the channel is not weixin', () => {
+    delete process.env.LARK_CHANNEL_CHANNEL;
+
+    const prompt = buildBridgeSystemPrompt({ openId: 'ou_bot_self' });
+
+    expect(prompt.startsWith(BRIDGE_SYSTEM_PROMPT)).toBe(true);
     expect(prompt).toContain('ou_bot_self');
   });
 });

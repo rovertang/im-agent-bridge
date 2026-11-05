@@ -24,6 +24,10 @@ vi.mock('../../../src/daemon/service-adapter', () => ({
 vi.mock('../../../src/runtime/profile-runtime', () => ({
   materializeEnvSecretForService: mocks.materializeEnvSecretForService,
   resolveProfileRuntime: mocks.resolveProfileRuntime,
+  requireLarkRuntimeCfg: (runtime: { cfg?: unknown }) => {
+    if (!runtime.cfg) throw new Error('lark runtime cfg required');
+    return runtime.cfg;
+  },
 }));
 
 vi.mock('../../../src/runtime/registry', () => ({
@@ -89,6 +93,7 @@ describe('profile-aware service commands', () => {
     mocks.stopProcessEntry.mockResolvedValue('terminated');
     mocks.resolveProfileRuntime.mockResolvedValue({
       profile: 'codex-dev',
+      profileConfig: { channel: { kind: 'lark' }, accounts: { app: { id: 'cli_codex', secret: '${APP_SECRET}', tenant: 'feishu' } } },
       configPath: '/tmp/lark-channel-home/config.json',
       appPaths: {
         profile: 'codex-dev',
@@ -160,6 +165,7 @@ describe('profile-aware service commands', () => {
     expect(mocks.materializeEnvSecretForService).toHaveBeenCalledWith({ profile: 'codex-dev' });
     expect(mocks.preFlightChecks).toHaveBeenCalledWith({
       skipCheckLarkCli: true,
+      profileConfig: expect.objectContaining({ channel: { kind: 'lark' } }),
       bridgeConfig: expect.objectContaining({
         accounts: {
           app: {
@@ -220,6 +226,7 @@ describe('profile-aware service commands', () => {
     mocks.resolveProfileRuntime
       .mockResolvedValueOnce({
         profile: 'codex-dev',
+        profileConfig: { channel: { kind: 'lark' }, accounts: { app: { id: 'cli_codex', secret: '${APP_SECRET}', tenant: 'feishu' } } },
         configPath: '/tmp/lark-channel-home/config.json',
         appPaths: {
           profile: 'codex-dev',
@@ -242,6 +249,7 @@ describe('profile-aware service commands', () => {
       })
       .mockResolvedValueOnce({
         profile: 'codex-dev',
+        profileConfig: { channel: { kind: 'lark' }, accounts: { app: { id: 'cli_codex', secret: '${APP_SECRET}', tenant: 'feishu' } } },
         configPath: '/tmp/lark-channel-home/config.json',
         appPaths: {
           profile: 'codex-dev',
@@ -255,6 +263,7 @@ describe('profile-aware service commands', () => {
       })
       .mockResolvedValueOnce({
         profile: 'codex-dev',
+        profileConfig: { channel: { kind: 'lark' }, accounts: { app: { id: 'cli_codex', secret: '${APP_SECRET}', tenant: 'feishu' } } },
         configPath: '/tmp/lark-channel-home/config.json',
         appPaths: {
           profile: 'codex-dev',
@@ -466,6 +475,7 @@ describe('profile-aware service commands', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     mocks.resolveProfileRuntime.mockResolvedValue({
       profile: 'claude',
+      profileConfig: { channel: { kind: 'lark' }, accounts: { app: { id: 'cli_claude', secret: '${APP_SECRET}', tenant: 'feishu' } } },
       appPaths: {
         profileLockFile: '/tmp/lark-channel-home/registry/locks/profile/claude.lock',
         appLockFile: (appId: string) => `/tmp/lark-channel-home/registry/locks/app/${appId}.lock`,

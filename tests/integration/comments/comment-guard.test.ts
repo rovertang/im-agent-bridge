@@ -4,7 +4,12 @@ import type { CommentEvent } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { handleCommentMention } from '../../../src/bot/comments.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
-import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type LarkProfileConfig,
+  type ProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
@@ -210,7 +215,7 @@ function profile(
   allowedUsers: string[],
   defaultWorkspace: string,
   comments: unknown,
-): ProfileConfig {
+): LarkProfileConfig {
   const config = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
@@ -219,7 +224,7 @@ function profile(
   });
   config.comments = comments as ProfileConfig['comments'];
   config.workspaces.default = defaultWorkspace;
-  return config;
+  return requireLarkProfile(config);
 }
 
 function event(overrides: Partial<CommentEvent> = {}): CommentEvent {

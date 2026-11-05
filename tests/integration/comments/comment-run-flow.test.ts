@@ -8,7 +8,12 @@ import { handleCommentMention } from '../../../src/bot/comments.js';
 import { commentDocumentScopeId, commentTokenDigest } from '../../../src/bot/comment-resource.js';
 import { codexCapability } from '../../../src/agent/capability.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
-import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type LarkProfileConfig,
+  type ProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { evaluateRunPolicy } from '../../../src/policy/run-policy.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
 import { SessionCatalog } from '../../../src/session/catalog.js';
@@ -558,7 +563,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   throw new Error('timed out waiting for condition');
 }
 
-function profile(defaultWorkspace: string, agentKind: 'claude' | 'codex' = 'claude'): ProfileConfig {
+function profile(defaultWorkspace: string, agentKind: 'claude' | 'codex' = 'claude'): LarkProfileConfig {
   const config = createDefaultProfileConfig({
     agentKind,
     accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
@@ -567,7 +572,7 @@ function profile(defaultWorkspace: string, agentKind: 'claude' | 'codex' = 'clau
     ...(agentKind === 'codex' ? { codex: { binaryPath: 'codex' } } : {}),
   });
   config.workspaces.default = defaultWorkspace;
-  return config;
+  return requireLarkProfile(config);
 }
 
 function codexRunWithProgress(threadId: string, progress: string, finalAnswer: string): AgentEvent[] {

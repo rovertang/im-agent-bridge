@@ -6,7 +6,11 @@ import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { handleCommentMention } from '../../../src/bot/comments.js';
 import { commentTokenDigest } from '../../../src/bot/comment-resource.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
-import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type LarkProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
@@ -329,7 +333,7 @@ function activeCommentScopes(h: { activeRuns: ActiveRuns }, threadScopeId: strin
   return h.activeRuns.scopes().filter((scope) => scope.startsWith(`${threadScopeId}:`));
 }
 
-function profile(defaultWorkspace: string): ProfileConfig {
+function profile(defaultWorkspace: string): LarkProfileConfig {
   const config = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
@@ -338,7 +342,7 @@ function profile(defaultWorkspace: string): ProfileConfig {
   });
   config.comments = {};
   config.workspaces.default = defaultWorkspace;
-  return config;
+  return requireLarkProfile(config);
 }
 
 function commentRunScopeId(fileToken: string, commentId: string): string {

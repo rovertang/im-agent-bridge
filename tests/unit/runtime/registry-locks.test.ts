@@ -234,6 +234,34 @@ describe('registry and runtime lock integration', () => {
     });
   });
 
+  it('keeps a weixin entry live through its channel-scoped app lock', async () => {
+    const root = await makeRoot();
+    const registryFile = join(root, 'registry', 'processes.json');
+    const accountId = '4f0d@im.test';
+    await writeJson(registryFile, {
+      entries: [
+        entry({
+          id: 'wx-live',
+          pid: process.pid,
+          profileName: 'wx',
+          appId: accountId,
+          tenant: 'weixin',
+          channel: 'weixin',
+        }),
+      ],
+    });
+
+    // The lock target is `weixin:<accountId>` while the entry stores the bare
+    // account id; stale detection must map between the two.
+    await expect(liveEntriesForProfile('wx', registryFile)).resolves.toEqual([]);
+    const wxPaths = resolveAppPaths({ rootDir: root, profile: 'wx' });
+    await withProfileAndAppLocks(wxPaths, `weixin:${accountId}`, 'claude', async () => {
+      const live = await liveEntriesForProfile('wx', registryFile);
+      expect(live.map((item) => item.id)).toEqual(['wx-live']);
+    });
+    await expect(liveEntriesForProfile('wx', registryFile)).resolves.toEqual([]);
+  });
+
   it('uses the registry file lock from sync unregister paths', async () => {
     const root = await makeRoot();
     const registryFile = join(root, 'registry', 'processes.json');

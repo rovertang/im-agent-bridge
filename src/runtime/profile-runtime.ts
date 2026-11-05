@@ -1,5 +1,5 @@
 import { mkdir, readFile, realpath } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import * as p from '@clack/prompts';
 import { runRegistrationWizard } from '../bot/wizard';
 import { detectInstalledAgents, type DetectedAgent } from '../cli/agent-detection';
@@ -31,8 +31,10 @@ import {
 } from '../config/profile-store';
 import {
   createDefaultProfileConfig,
+  profileChannelKind,
   type AgentKind,
   type CreateDefaultProfileConfigInput,
+  type ProfileChannelKind,
   type ProfileConfig,
   type RootConfig,
 } from '../config/profile-schema';
@@ -61,6 +63,8 @@ export interface ResolveProfileRuntimeOptions {
   appId?: string;
   appSecret?: string;
   tenant?: string;
+  /** Channel to create when bootstrapping a new profile. Undefined = lark. */
+  channel?: string;
   allowBootstrap?: boolean;
   selectAgent?: (detected: DetectedAgent[]) => AgentKind | undefined | Promise<AgentKind | undefined>;
   handleActiveBridgeMigrationConflict?: (
@@ -69,11 +73,38 @@ export interface ResolveProfileRuntimeOptions {
 }
 
 export interface ProfileRuntime {
-  cfg: AppConfig & { agentKind?: AgentKind };
+  /**
+   * Resolved Lark app config. Present only for `lark` profiles: a `weixin`
+   * profile has no Feishu app credentials, so consumers MUST branch on
+   * `profileChannelKind(runtime.profileConfig)` (or call
+   * {@link requireLarkRuntimeCfg}) before touching it.
+   */
+  cfg?: AppConfig & { agentKind?: AgentKind };
   profileConfig: ProfileConfig;
   configPath: string;
   appPaths: AppPaths;
   profile: string;
+}
+
+/** Narrow a runtime to its Lark config, failing loudly for weixin profiles. */
+export function requireLarkRuntimeCfg(
+  runtime: ProfileRuntime,
+): AppConfig & { agentKind?: AgentKind } {
+  if (!runtime.cfg) {
+    throw new Error(
+      `profile「${runtime.profile}」是微信渠道（weixin），没有飞书 app 配置；该操作只适用于 lark profile。`,
+    );
+  }
+  return runtime.cfg;
+}
+
+/** Parse a `--channel` value into a channel kind; undefined means "not given". */
+export function normalizeProfileChannelOption(
+  value: string | undefined,
+): ProfileChannelKind | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'lark' || value === 'weixin') return value;
+  throw new Error(`channel must be lark or weixin: ${value}`);
 }
 
 export interface MaterializeEnvSecretForServiceOptions {
@@ -100,9 +131,12 @@ export function createRuntimeProfileConfig(
 export async function resolveProfileRuntime(
   opts: ResolveProfileRuntimeOptions,
 ): Promise<ProfileRuntime> {
+  const requestedChannel = normalizeProfileChannelOption(opts.channel);
   const rootDir = opts.config ? dirname(opts.config) : undefined;
   const recoveryConfigFile = opts.config ?? resolveAppPaths({ rootDir }).configFile;
-  if (await hasLegacyLarkCliSourceOverlay(recoveryConfigFile)) {
+  // The legacy lark-cli overlay is a Feishu-only recovery artifact: a weixin
+  // profile never runs lark-cli, so skip touching config.json for it.
+  if (requestedChannel !== 'weixin' && (await hasLegacyLarkCliSourceOverlay(recoveryConfigFile))) {
     await recoverLegacyLarkCliSourceOverlay(recoveryConfigFile);
   }
   const requestedAgent = agentKindFromString(opts.agent);
@@ -160,6 +194,7 @@ export async function resolveProfileRuntime(
           rootConfig,
           profile,
           requestedAgent,
+          requestedChannel,
           opts,
           appPaths,
           configPath,
@@ -186,6 +221,11 @@ export async function resolveProfileRuntime(
         workspace: defaultWorkspaceUpgrade.changed,
       });
     }
+    if (profileChannelKind(profileConfig) === 'weixin') {
+      // No Feishu app config exists for a weixin profile: skip the lark
+      // credential bootstrap/migration/secret-migration path entirely.
+      return { profileConfig, configPath, appPaths, profile };
+    }
     assertBootstrapAppMatchesExistingProfile(opts, profile, profileConfig);
     const cfg = await maybeMigrateRootPlaintextSecret(rootConfig, profile, appPaths, configPath);
     return { cfg, profileConfig, configPath, appPaths, profile };
@@ -193,6 +233,12 @@ export async function resolveProfileRuntime(
 
   const existing = await loadConfig(configPath);
   if (isComplete(existing)) {
+    if (requestedChannel === 'weixin') {
+      throw new Error(
+        '当前 config.json 是旧版单 profile 飞书配置，无法用它创建微信渠道 profile；' +
+          '请先运行 `lark-channel-bridge run` 完成迁移后，再执行 `profile create <name> --channel weixin`。',
+      );
+    }
     assertBootstrapAppMatchesExistingConfig(opts, profile, existing);
     const cfg = await maybeMigratePlaintextSecret(existing, configPath, appPaths);
     const profileConfig = createRuntimeProfileConfig({
@@ -213,6 +259,19 @@ export async function resolveProfileRuntime(
   }
   const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? 'claude';
   const workspace = opts.workspace;
+  if (requestedChannel === 'weixin') {
+    const profileConfig = await createWeixinRuntimeProfileConfig({
+      agentKind: bootstrapAgent,
+      ...(workspace ? { workspace } : {}),
+      defaultWorkspace: appPaths.defaultWorkspaceDir,
+      profileDir: appPaths.profileDir,
+    });
+    const root = createRootConfig(profile, profileConfig);
+    await saveRootConfig(root, configPath);
+    await writeActiveProfile(appPaths.rootDir, profile);
+    console.log(`配置已保存到 ${configPath}\n`);
+    return { profileConfig, configPath, appPaths, profile };
+  }
   const fresh = await resolveBootstrapAppConfig(opts);
   const encrypted = await encryptedConfigForProfile(fresh, appPaths);
   const profileConfig = await createBootstrapProfileConfig({
@@ -231,16 +290,81 @@ export async function resolveProfileRuntime(
   return { cfg: runtimeProfileConfig(root, profile), profileConfig, configPath, appPaths, profile };
 }
 
+/**
+ * Build a fresh `weixin` profile: agent detection/resolution + workspace, then
+ * `channel:{kind:'weixin'}` and an empty account list (filled in by
+ * `lark-channel-bridge weixin login`). No Feishu app credentials are involved.
+ */
+async function createWeixinRuntimeProfileConfig(input: {
+  agentKind: AgentKind;
+  workspace?: string;
+  defaultWorkspace: string;
+  profileDir: string;
+}): Promise<ProfileConfig> {
+  const workspace = input.workspace
+    ? await resolveBootstrapWorkspace(input.workspace)
+    : await ensureManagedWorkspace(input.defaultWorkspace);
+  const codex =
+    input.agentKind === 'codex'
+      ? await createBootstrapCodexConfig(undefined)
+      : undefined;
+  const dsh =
+    input.agentKind === 'dsh' ? await createBootstrapDshConfig(undefined) : undefined;
+  const profileConfig = createDefaultProfileConfig({
+    agentKind: input.agentKind,
+    channel: { kind: 'weixin' },
+    weixin: { accounts: [] },
+    ...(codex ? { codex } : {}),
+    ...(dsh ? { dsh } : {}),
+  });
+  profileConfig.workspaces = {
+    ...profileConfig.workspaces,
+    default: workspace,
+  };
+  if (profileConfig.codex?.inheritCodexHome === false) {
+    await mkdir(join(input.profileDir, 'codex-home'), { recursive: true });
+  }
+  return profileConfig;
+}
+
+async function ensureManagedWorkspace(path: string): Promise<string> {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  return realpath(path);
+}
+
 async function bootstrapProfileIntoExistingRoot(args: {
   rootConfig: RootConfig;
   profile: string;
   requestedAgent: AgentKind | undefined;
+  requestedChannel: ProfileChannelKind | undefined;
   opts: ResolveProfileRuntimeOptions;
   appPaths: AppPaths;
   configPath: string;
 }): Promise<ProfileRuntime> {
-  const { rootConfig, profile, requestedAgent, opts, appPaths, configPath } = args;
+  const { rootConfig, profile, requestedAgent, requestedChannel, opts, appPaths, configPath } =
+    args;
   const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? 'claude';
+  if (requestedChannel === 'weixin') {
+    const profileConfig = await createWeixinRuntimeProfileConfig({
+      agentKind: bootstrapAgent,
+      ...(opts.workspace ? { workspace: opts.workspace } : {}),
+      defaultWorkspace: appPaths.defaultWorkspaceDir,
+      profileDir: appPaths.profileDir,
+    });
+    const nextRoot: RootConfig = {
+      ...rootConfig,
+      profiles: {
+        ...rootConfig.profiles,
+        [profile]: {
+          ...profileConfig,
+          secrets: undefined,
+        },
+      },
+    };
+    await saveRootConfig(markPermissionDefaultsMigration(nextRoot, profile), configPath);
+    console.log(`配置已保存到 ${configPath}\n`);
+    return { profileConfig, configPath, appPaths, profile };
+  }
   const workspace = opts.workspace;
   const fresh = await resolveBootstrapAppConfig(opts);
   const encrypted = await encryptedConfigForProfile(fresh, appPaths);
@@ -494,9 +618,17 @@ function assertBootstrapAppMatchesExistingProfile(
   profile: string,
   profileConfig: ProfileConfig,
 ): void {
-  if (!opts.appId || opts.appId === profileConfig.accounts.app.id) return;
+  const existingAppId = profileConfig.accounts?.app.id;
+  if (!opts.appId) return;
+  if (!existingAppId) {
+    throw new Error(
+      `profile already exists: ${profile}; it has no Lark app credentials. ` +
+        'omit --app-id or create another profile',
+    );
+  }
+  if (opts.appId === existingAppId) return;
   throw new Error(
-    `profile already exists: ${profile}; it uses app ${profileConfig.accounts.app.id}. ` +
+    `profile already exists: ${profile}; it uses app ${existingAppId}. ` +
       'omit --app-id or create another profile',
   );
 }
@@ -545,6 +677,9 @@ export async function materializeEnvSecretForService(
     }
     const profileConfig = rootConfig.profiles[profile];
     if (!profileConfig) throw new Error(`profile not found: ${profile}`);
+    // Weixin credentials live in the profile state dir, not in config.json, so
+    // there is no env-backed app secret to materialize for the service.
+    if (profileChannelKind(profileConfig) === 'weixin') return false;
     const cfg = runtimeProfileConfig(rootConfig, profile);
     if (!isEnvBackedSecret(cfg.accounts.app.secret)) return false;
 

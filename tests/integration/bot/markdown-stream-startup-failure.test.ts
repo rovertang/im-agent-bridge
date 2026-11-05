@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../../../src/agent/types.js';
 import type { FakeAgentEvents } from '../../helpers/fake-agent.js';
-import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type LarkProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { log } from '../../../src/core/logger.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
@@ -444,29 +448,31 @@ async function createHarness(options: {
   agent: FakeAgentAdapter;
   sessions: SessionStore;
   workspaces: WorkspaceStore;
-  profileConfig: ReturnType<typeof createDefaultProfileConfig>;
+  profileConfig: LarkProfileConfig;
   controls: ReturnType<typeof createControls>;
 }> {
   const tmp = await createTmpProfile('markdown-stream-startup-failure-');
   const workspace = await realpath(tmp.workspace);
-  const baseProfileConfig = createDefaultProfileConfig({
-    agentKind: options.agentKind ?? 'codex',
-    accounts: {
-      app: {
-        id: 'cli_test',
-        secret: 'secret',
-        tenant: 'feishu',
+  const baseProfileConfig = requireLarkProfile(
+    createDefaultProfileConfig({
+      agentKind: options.agentKind ?? 'codex',
+      accounts: {
+        app: {
+          id: 'cli_test',
+          secret: 'secret',
+          tenant: 'feishu',
+        },
       },
-    },
-    access: {
-      allowedUsers: ['ou_user'],
-    },
-    codex: {
-      binaryPath: '/usr/local/bin/codex',
-    },
-    ...(options.messageReply ? { preferences: { messageReply: options.messageReply } } : {}),
-  });
-  const profileConfig = {
+      access: {
+        allowedUsers: ['ou_user'],
+      },
+      codex: {
+        binaryPath: '/usr/local/bin/codex',
+      },
+      ...(options.messageReply ? { preferences: { messageReply: options.messageReply } } : {}),
+    }),
+  );
+  const profileConfig: LarkProfileConfig = {
     ...baseProfileConfig,
     workspaces: {
       ...baseProfileConfig.workspaces,
@@ -508,7 +514,7 @@ async function createHarness(options: {
 }
 
 async function startTestBridge(h: {
-  profileConfig: ReturnType<typeof createDefaultProfileConfig>;
+  profileConfig: LarkProfileConfig;
   agent: FakeAgentAdapter;
   sessions: SessionStore;
   workspaces: WorkspaceStore;
@@ -607,7 +613,7 @@ function deferred<T>(): {
   return { promise, resolve, reject };
 }
 
-function createControls(profileConfig: ReturnType<typeof createDefaultProfileConfig>) {
+function createControls(profileConfig: LarkProfileConfig) {
   return {
     profile: 'codex',
     profileConfig,

@@ -36,7 +36,7 @@ describe('writeNewProfile (new-profile is additive)', () => {
 
     // The existing profile still points at the original app.
     const afterCollision = (await loadRootConfig(join(root, 'config.json')))!;
-    expect(afterCollision.profiles.claude?.accounts.app.id).toBe('cli_a');
+    expect(afterCollision.profiles.claude?.accounts?.app.id).toBe('cli_a');
 
     // A different name is added alongside.
     const second = await writeNewProfile({ ...base, profile: 'work', appId: 'cli_b' }, root);
@@ -62,7 +62,7 @@ describe('writeNewProfile (new-profile is additive)', () => {
     expect(created.profile).toBe('助手');
 
     const cfg = (await loadRootConfig(join(root, 'config.json')))!;
-    expect(cfg.profiles['助手']?.accounts.app.id).toBe('cli_nimo');
+    expect(cfg.profiles['助手']?.accounts?.app.id).toBe('cli_nimo');
   });
 
   it('rejects a path-unsafe profile name with a clear 400 (not a 500)', async () => {

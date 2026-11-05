@@ -25,6 +25,7 @@ import {
 } from './commands/service';
 import { runStart } from './commands/start';
 import { runUi } from './commands/ui';
+import { runWeixinLogin, runWeixinSend } from './commands/weixin';
 
 const program = new Command();
 
@@ -85,12 +86,14 @@ profile
 profile
   .command('create <name>')
   .description('Create a profile from QR registration or existing app credentials')
+  .option('--channel <kind>', 'channel transport: lark (default) or weixin')
   .option('--agent <kind>', 'agent kind (claude, codex, or dsh)')
   .option('--workspace <path>', 'initial working directory for this profile')
   .option('--app-id <id>', 'use an existing Lark/Feishu app instead of QR app creation')
   .option('--app-secret <secret>', 'App Secret for --app-id; prefer interactive input on shared machines')
   .option('--tenant <tenant>', 'tenant for --app-id (feishu or lark; default feishu)')
   .action(async (name: string, opts: {
+    channel?: string;
     agent?: string;
     workspace?: string;
     appId?: string;
@@ -257,6 +260,43 @@ secrets
   .option('--profile <name>', 'profile name (defaults to active profile)')
   .action(async (opts: { appId: string; profile?: string }) => {
     await runSecretsRemove(opts.appId, { profile: opts.profile });
+  });
+
+const weixin = program
+  .command('weixin')
+  .description('WeChat (iLink bot) channel commands');
+
+weixin
+  .command('login')
+  .description('Scan a QR code to connect a WeChat bot account to a weixin profile')
+  .option('-c, --config <path>', 'path to config file')
+  .option('--profile <name>', 'profile name (defaults to active profile)')
+  .action(async (opts: { config?: string; profile?: string }) => {
+    await runWeixinLogin({ config: opts.config, profile: opts.profile });
+  });
+
+weixin
+  .command('send')
+  .description('Send one text message through a logged-in WeChat account (debug aid)')
+  .requiredOption('--to <userId>', 'recipient ilink_user_id (the WeChat user who messaged the bot)')
+  .requiredOption('--text <text>', 'message body')
+  .option('--account <id>', 'account id (defaults to the first logged-in account)')
+  .option('-c, --config <path>', 'path to config file')
+  .option('--profile <name>', 'profile name (defaults to active profile)')
+  .action(async (opts: {
+    to: string;
+    text: string;
+    account?: string;
+    config?: string;
+    profile?: string;
+  }) => {
+    await runWeixinSend({
+      to: opts.to,
+      text: opts.text,
+      ...(opts.account ? { account: opts.account } : {}),
+      ...(opts.config ? { config: opts.config } : {}),
+      ...(opts.profile ? { profile: opts.profile } : {}),
+    });
   });
 
 program.parseAsync(process.argv).catch((err: unknown) => {

@@ -4,12 +4,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
-import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type LarkProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { createRootConfig, loadRootConfig, saveRootConfig } from '../../../src/config/profile-store.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { createFakeAgent } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
+import { createFakeChannelPort } from '../../helpers/fake-channel-port.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 
 interface RunOverrides {
@@ -344,7 +349,7 @@ async function createHarness(): Promise<Harness> {
     const chatId = overrides.chatId ?? 'chat-1';
     const scope = overrides.scope ?? chatId;
     return tryHandleCommand({
-      channel: channel as unknown as CommandContext['channel'],
+      channel: createFakeChannelPort(channel),
       msg: message(content, {
         chatId,
         senderId: overrides.senderId ?? 'ou-admin',
@@ -368,7 +373,7 @@ async function createHarness(): Promise<Harness> {
   return { tmp, channel, sessions, workspaces, activeRuns, agent, controls, run };
 }
 
-function appConfig(defaultWorkspace: string): ProfileConfig {
+function appConfig(defaultWorkspace: string): LarkProfileConfig {
   const config = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
@@ -377,7 +382,7 @@ function appConfig(defaultWorkspace: string): ProfileConfig {
     preferences: { maxConcurrentRuns: 2 },
   });
   config.workspaces.default = defaultWorkspace;
-  return config;
+  return requireLarkProfile(config);
 }
 
 function message(

@@ -4,7 +4,7 @@ import type { AgentEvent } from '../../../src/agent/types.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { handleCommentMention } from '../../../src/bot/comments.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
-import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
+import { createDefaultProfileConfig, requireLarkProfile } from '../../../src/config/profile-schema.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
 import { SessionCatalog } from '../../../src/session/catalog.js';
 import { SessionStore } from '../../../src/session/store.js';
@@ -271,18 +271,20 @@ async function createCommentHarness(options: {
   const workspaces = new WorkspaceStore(`${tmp.profile}/workspaces.json`);
   workspaces.setCwd('doc:doc-token', tmp.workspace);
   workspaces.setCwd('doc:wiki-token', tmp.workspace);
-  const profileConfig = createDefaultProfileConfig({
-    agentKind: 'claude',
-    accounts: {
-      app: {
-        id: 'cli_test',
-        secret: '${APP_SECRET}',
-        tenant: 'feishu',
+  const profileConfig = requireLarkProfile(
+    createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: {
+        app: {
+          id: 'cli_test',
+          secret: '${APP_SECRET}',
+          tenant: 'feishu',
+        },
       },
-    },
-    access: { allowedUsers: ['ou-user'] },
-    sandbox: { defaultMode: 'read-only', maxMode: 'workspace-write' },
-  });
+      access: { allowedUsers: ['ou-user'] },
+      sandbox: { defaultMode: 'read-only', maxMode: 'workspace-write' },
+    }),
+  );
   profileConfig.workspaces.default = tmp.workspace;
   const activeRuns = new ActiveRuns();
   const executor = new RunExecutor({

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../agent/lark-channel-env';
 import type { AppPaths } from '../config/app-paths';
 import {
+  profileChannelKind,
   type LarkCliConfig,
   type LarkCliIdentityPreset,
   type LarkCliUserImportStatus,
@@ -39,6 +40,17 @@ const MANUAL_INSTALL_HINT = [
   'Docs: https://github.com/larksuite/cli',
 ].join('\n');
 
+export interface WeixinPreFlightDeps {
+  /** Assert the profile has a logged-in account + local credential. */
+  ensureCredential(
+    profileConfig: ProfileConfig,
+    profileDir: string,
+    profile: string,
+  ): Promise<void>;
+  /** Assert the configured local agent binary is available. */
+  ensureAgentAvailable(profileConfig: ProfileConfig, appPaths: AppPaths): Promise<void>;
+}
+
 export interface PreFlightOptions {
   /** Skip lark-cli auto-install + bind. */
   skipCheckLarkCli?: boolean;
@@ -46,11 +58,50 @@ export interface PreFlightOptions {
   bridgeConfig?: AppConfig;
   profileConfig?: ProfileConfig;
   appPaths?: AppPaths;
+  /** Test seams for the weixin branch (defaults hit the real implementations). */
+  weixinDeps?: Partial<WeixinPreFlightDeps>;
 }
 
 export async function preFlightChecks(opts: PreFlightOptions): Promise<void> {
+  if (opts.profileConfig && profileChannelKind(opts.profileConfig) === 'weixin') {
+    await checkWeixinProfile(opts);
+    return;
+  }
   await checkLarkCli(opts);
 }
+
+/**
+ * Weixin preflight: there is no lark-cli and no Feishu app credentials to
+ * check, but a weixin profile is useless without a logged-in account and a
+ * local agent binary, so fail fast in the TTY instead of in the daemon.
+ */
+async function checkWeixinProfile(opts: PreFlightOptions): Promise<void> {
+  const profileConfig = opts.profileConfig;
+  const appPaths = opts.appPaths;
+  if (!profileConfig || !appPaths) return;
+  const deps: WeixinPreFlightDeps = {
+    ...defaultWeixinDeps,
+    ...opts.weixinDeps,
+  };
+  await deps.ensureCredential(profileConfig, appPaths.profileDir, appPaths.profile);
+  await deps.ensureAgentAvailable(profileConfig, appPaths);
+}
+
+const defaultWeixinDeps: WeixinPreFlightDeps = {
+  async ensureCredential(profileConfig, profileDir, profile) {
+    const { requireWeixinAccountCredential } = await import('../runtime/weixin-profile');
+    const account = await requireWeixinAccountCredential(profileConfig, profileDir, profile);
+    console.log(`✓ 微信账号凭证就绪: ${account.name ?? account.id}`);
+  },
+  async ensureAgentAvailable(profileConfig, appPaths) {
+    const { checkRuntimeAgentAvailability, createRuntimeAgent } = await import(
+      '../runtime/agent-runtime'
+    );
+    const agent = createRuntimeAgent(profileConfig, appPaths);
+    const availability = await checkRuntimeAgentAvailability(agent);
+    if (!availability.ok) throw availability.error;
+  },
+};
 
 async function checkLarkCli(opts: PreFlightOptions): Promise<void> {
   if (opts.skipCheckLarkCli) return;

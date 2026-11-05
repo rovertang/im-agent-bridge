@@ -4,14 +4,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { ProcessPool } from '../../../src/bot/process-pool';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index';
-import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
+import { tryHandleCommand, type Controls } from '../../../src/commands/index';
+import { createDefaultProfileConfig, requireLarkProfile } from '../../../src/config/profile-schema';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
 import { RunExecutor } from '../../../src/runtime/run-executor';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createFakeChannel } from '../../helpers/fake-channel';
+import { createFakeChannelPort } from '../../helpers/fake-channel-port';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -64,12 +65,14 @@ async function createHarness(): Promise<{
   const agent = new FakeAgentAdapter({
     events: [[{ type: 'text', delta: 'OK' }, { type: 'done', terminationReason: 'normal' }]],
   });
-  const profileConfig = createDefaultProfileConfig({
-    agentKind: 'claude',
-    accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
-    access: { admins: ['ou-admin'] },
-    sandbox: { defaultMode: 'read-only', maxMode: 'workspace-write' },
-  });
+  const profileConfig = requireLarkProfile(
+    createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
+      access: { admins: ['ou-admin'] },
+      sandbox: { defaultMode: 'read-only', maxMode: 'workspace-write' },
+    }),
+  );
   profileConfig.workspaces.default = tmp.workspace;
   const controls = {
     profile: 'claude',
@@ -98,7 +101,7 @@ async function createHarness(): Promise<{
     logsDir,
     run: (content: string) =>
       tryHandleCommand({
-        channel: channel as unknown as CommandContext['channel'],
+        channel: createFakeChannelPort(channel),
         msg: message(content),
         scope: 'chat-1',
         chatMode: 'p2p',

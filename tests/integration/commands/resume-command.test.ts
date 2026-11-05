@@ -6,8 +6,14 @@ import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import type { ChatModeCache } from '../../../src/bot/chat-mode-cache.js';
 import { PendingQueue } from '../../../src/bot/pending-queue.js';
 import { handleCardAction } from '../../../src/card/dispatcher.js';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
-import { createDefaultProfileConfig, type AgentKind, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import { tryHandleCommand, type Controls } from '../../../src/commands/index.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type AgentKind,
+  type LarkProfileConfig,
+  type ProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { canUseDm } from '../../../src/policy/access.js';
 import { evaluateRunPolicy } from '../../../src/policy/run-policy.js';
 import { resolveWorkingDirectory } from '../../../src/policy/workspace.js';
@@ -18,6 +24,7 @@ import type { CodexThreadHistoryEntry } from '../../../src/session/codex-history
 import type { SessionSummary } from '../../../src/session/history.js';
 import { createFakeAgent } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
+import { createFakeChannelPort } from '../../helpers/fake-channel-port.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 
 interface Harness {
@@ -309,7 +316,7 @@ async function createHarness(
     runOptions: { withCatalogIdentity?: boolean; chatMode?: 'p2p' | 'group' | 'topic' } = {},
   ): Promise<boolean> =>
     tryHandleCommand({
-      channel: channel as unknown as CommandContext['channel'],
+      channel: createFakeChannelPort(channel),
       msg: message(content),
       scope: 'chat-1',
       chatMode: runOptions.chatMode ?? 'p2p',
@@ -410,13 +417,15 @@ async function commandIdentity(
   };
 }
 
-function appConfig(agentKind: AgentKind): ProfileConfig {
-  return createDefaultProfileConfig({
-    agentKind,
-    accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
-    access: { admins: ['ou-user'] },
-    ...(agentKind === 'codex' ? { codex: { binaryPath: '/usr/local/bin/codex' } } : {}),
-  });
+function appConfig(agentKind: AgentKind): LarkProfileConfig {
+  return requireLarkProfile(
+    createDefaultProfileConfig({
+      agentKind,
+      accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
+      access: { admins: ['ou-user'] },
+      ...(agentKind === 'codex' ? { codex: { binaryPath: '/usr/local/bin/codex' } } : {}),
+    }),
+  );
 }
 
 function message(content: string): NormalizedMessage {

@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActiveRuns } from '../../../src/bot/active-runs';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index';
+import { tryHandleCommand, type Controls } from '../../../src/commands/index';
 import { resolveAppPaths } from '../../../src/config/app-paths';
 import { getSecret, listSecretIds } from '../../../src/config/keystore';
 import {
@@ -17,6 +17,7 @@ import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createFakeChannel } from '../../helpers/fake-channel';
+import { createFakeChannelPort } from '../../helpers/fake-channel-port';
 
 vi.mock('../../../src/utils/feishu-auth', () => ({
   validateAppCredentials: vi.fn(async () => ({
@@ -215,11 +216,11 @@ describe('profile-aware account and config commands', () => {
     });
 
     const root = await waitForRoot(h.rootDir, (candidate) =>
-      candidate.profiles.claude?.accounts.app.id === 'cli_new',
+      candidate.profiles.claude?.accounts?.app.id === 'cli_new',
     );
     expect(root.schemaVersion).toBe(2);
     expect(root.profiles['codex-dev']).toBeDefined();
-    expect(root.profiles.claude?.accounts.app).toMatchObject({
+    expect(root.profiles.claude?.accounts?.app).toMatchObject({
       id: 'cli_new',
       tenant: 'lark',
       secret: {
@@ -277,7 +278,7 @@ async function createHarness(options: {
     channel,
     command: (content: string, formValue?: Record<string, unknown>) =>
       tryHandleCommand({
-        channel: channel as unknown as CommandContext['channel'],
+        channel: createFakeChannelPort(channel),
         msg: message(content),
         scope: 'chat-1',
         chatMode: 'p2p',

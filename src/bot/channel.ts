@@ -5,6 +5,8 @@ import type {
 } from '@larksuite/channel';
 import { createLarkChannel } from '@larksuite/channel';
 import { dirname, join } from 'node:path';
+import { createLarkChannelPort } from '../channel/lark';
+import type { ChannelPort, ChannelStreamController } from '../channel/port';
 import { capabilityFor } from '../agent/capability';
 import { modelLabel, normalizeModelSelection, resolveModelArg } from '../agent/models';
 import {
@@ -168,6 +170,12 @@ function stringifyArgs(args: unknown[]): string {
 
 export interface BridgeChannel {
   channel: LarkChannel;
+  /**
+   * Channel-neutral port wrapping `channel`. Business code (commands, reply
+   * delivery) depends on this instead of the Lark SDK type; `channel` stays
+   * available for Feishu-only call sites (media, cards, comments, meetings).
+   */
+  port: ChannelPort;
   disconnect(): Promise<void>;
 }
 
@@ -270,6 +278,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
 
   const channel = createLarkChannel(opts);
+  const port = createLarkChannelPort(channel);
   const media = new MediaCache(channel, deps.appPaths?.mediaDir);
 
   // Pending → run handoff: while a run is active on a chat, block its pending
@@ -306,6 +315,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         }
         await runAgentBatch({
           channel,
+          port,
           executor,
           sessions,
           sessionCatalog,
@@ -337,6 +347,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       await withTrace({ chatId: msg.chatId, msgId: msg.messageId }, () =>
         intakeMessage({
           channel,
+          port,
           agent,
           sessions,
           sessionCatalog,
@@ -508,6 +519,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   return {
     channel,
+    port,
     disconnect: async () => {
       activeRuns.pauseNewRuns('bridge-disconnect');
       ownerRefresh.stop();
@@ -563,7 +575,7 @@ function startKnownChatsRefreshTimer(
 }
 
 async function sendNonAllowedGroupHint(
-  channel: LarkChannel,
+  port: ChannelPort,
   chatId: string,
   replyToMessageId: string,
 ): Promise<void> {
@@ -571,9 +583,9 @@ async function sendNonAllowedGroupHint(
     '当前群尚未加入响应列表，所以 bot 不会处理消息。\n' +
     'Bot owner/管理员可在本群发 /invite group 加入白名单。';
   try {
-    await channel.send(chatId, { text }, { replyTo: replyToMessageId });
+    await port.send(chatId, { kind: 'text', text }, { replyTo: replyToMessageId });
   } catch {
-    await channel.send(chatId, { text });
+    await port.send(chatId, { kind: 'text', text });
   }
 }
 
@@ -597,7 +609,7 @@ function isForwardFetchFailed(msg: NormalizedMessage): boolean {
 }
 
 async function sendForwardFetchFailedHint(
-  channel: LarkChannel,
+  port: ChannelPort,
   chatId: string,
   replyToMessageId: string,
 ): Promise<void> {
@@ -605,14 +617,15 @@ async function sendForwardFetchFailedHint(
     '这条合并转发的内容没能从飞书拉取到（上游超时/网络抖动，已自动重试仍失败），' +
     '所以我没收到里面的消息。麻烦稍后重新转发一次。';
   try {
-    await channel.send(chatId, { text }, { replyTo: replyToMessageId });
+    await port.send(chatId, { kind: 'text', text }, { replyTo: replyToMessageId });
   } catch {
-    await channel.send(chatId, { text });
+    await port.send(chatId, { kind: 'text', text });
   }
 }
 
 interface IntakeDeps {
   channel: LarkChannel;
+  port: ChannelPort;
   agent: AgentAdapter;
   sessions: SessionStore;
   sessionCatalog?: SessionCatalog;
@@ -636,6 +649,7 @@ type LogThreadModeOverride = (input: {
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
   const {
     channel,
+    port,
     agent,
     sessions,
     sessionCatalog,
@@ -713,7 +727,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
       reason: accessDecision.reason,
     });
     if (msg.chatType !== 'p2p' && accessDecision.reason === 'denied-chat' && msg.mentionedBot) {
-      void sendNonAllowedGroupHint(channel, msg.chatId, msg.messageId).catch((err) =>
+      void sendNonAllowedGroupHint(port, msg.chatId, msg.messageId).catch((err) =>
         log.warn('intake', 'non-allowed-hint-failed', { err: String(err) }),
       );
     }
@@ -749,14 +763,14 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
       msgId: emsg.messageId,
       chatType: emsg.chatType,
     });
-    await sendForwardFetchFailedHint(channel, emsg.chatId, emsg.messageId).catch((err) =>
+    await sendForwardFetchFailedHint(port, emsg.chatId, emsg.messageId).catch((err) =>
       log.warn('intake', 'forward-fetch-failed-hint-failed', { err: String(err) }),
     );
     return;
   }
 
   const handled = await tryHandleCommand({
-    channel,
+    channel: port,
     msg: emsg,
     scope,
     chatMode,
@@ -789,6 +803,8 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
 
 interface RunBatchDeps {
   channel: LarkChannel;
+  /** Channel-neutral outbound surface; see {@link BridgeChannel.port}. */
+  port: ChannelPort;
   executor: RunExecutor;
   sessions: SessionStore;
   sessionCatalog?: SessionCatalog;
@@ -807,6 +823,7 @@ interface RunBatchDeps {
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const {
     channel,
+    port,
     executor,
     sessions,
     sessionCatalog,
@@ -984,7 +1001,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       source: 'im',
       code: flow.rejectReason.code,
     });
-    await channel.send(chatId, { markdown: flow.rejectReason.userVisible }, sendOpts);
+    await port.send(chatId, { kind: 'markdown', markdown: flow.rejectReason.userVisible }, sendOpts);
     return;
   }
 
@@ -1068,7 +1085,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   // Add a "Typing" reaction to the triggering message as an instant ack, but
   // never let that outbound API call block agent event draining.
   const reactionPromise =
-    cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);
+    cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(port, lastMsg.messageId);
 
   try {
     if (cotEnabled) {
@@ -1100,7 +1117,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         await cotDone;
         if (cotPublisher.degradedReason) {
           await sendCotDegradedNotice({
-            channel,
+            port,
             chatId,
             scope,
             sendOpts,
@@ -1108,7 +1125,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           });
         }
         await sendFinalReply({
-          channel,
+          port,
           chatId,
           scope,
           state: finalAnswerOnlyState(finalState),
@@ -1124,22 +1141,19 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     if (replyMode === 'card') {
       let latestState: RunState = initialState;
       let producerStarted = false;
-      let cardCtrl:
-        | { update(next: object | ((current: object) => object)): Promise<void> }
-        | undefined;
+      let cardCtrl: ChannelStreamController | undefined;
       const progress = createLazyProgressStream(scope, replyMode, () =>
-        channel.stream(
+        port.openStream(
           chatId,
           {
-            card: {
-              initial: renderCard(initialState, cardRenderOptions),
-              producer: async (ctrl) => {
-                producerStarted = true;
-                if (progress.abandoned()) return;
-                cardCtrl = ctrl;
-                await ctrl.update(renderCard(filterForPrefs(latestState), cardRenderOptions));
-                await renderDone;
-              },
+            mode: 'card',
+            initialCard: renderCard(initialState, cardRenderOptions),
+            produce: async (ctrl) => {
+              producerStarted = true;
+              if (progress.abandoned()) return;
+              cardCtrl = ctrl;
+              await ctrl.updateCard(renderCard(filterForPrefs(latestState), cardRenderOptions));
+              await renderDone;
             },
           },
           sendOpts,
@@ -1155,7 +1169,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           latestState = state;
           if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
           if (cardCtrl) {
-            await cardCtrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
+            await cardCtrl.updateCard(renderCard(filterForPrefs(state), cardRenderOptions));
           }
         },
       );
@@ -1168,9 +1182,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           fallback: async (state) => {
             if (controls.profileConfig.agentKind === 'codex') return;
             if (renderText(filterForPrefs(state)).trim() === '') return;
-            await channel.send(
+            await port.send(
               chatId,
-              { card: renderCard(filterForPrefs(state), cardRenderOptions) },
+              { kind: 'card', card: renderCard(filterForPrefs(state), cardRenderOptions) },
               sendOpts,
             );
           },
@@ -1179,10 +1193,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         if (controls.profileConfig.agentKind !== 'codex') throw err;
         log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
       }
-      await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
+      await recallIfEmptyStreamedReply(port, progress, filterForPrefs(latestState), scope);
       if (controls.profileConfig.agentKind === 'codex') {
         await sendFinalReply({
-          channel,
+          port,
           chatId,
           scope,
           state: finalReplyState(progress, filterForPrefs(latestState)),
@@ -1194,16 +1208,17 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     } else if (replyMode === 'markdown') {
       let latestState: RunState = initialState;
       let producerStarted = false;
-      let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
+      let markdownCtrl: ChannelStreamController | undefined;
       const progress = createLazyProgressStream(scope, replyMode, () =>
-        channel.stream(
+        port.openStream(
           chatId,
           {
-            markdown: async (ctrl) => {
+            mode: 'markdown',
+            produce: async (ctrl) => {
               producerStarted = true;
               if (progress.abandoned()) return;
               markdownCtrl = ctrl;
-              await ctrl.setContent(renderText(filterForPrefs(latestState)));
+              await ctrl.setMarkdown(renderText(filterForPrefs(latestState)));
               await renderDone;
             },
           },
@@ -1220,7 +1235,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           latestState = state;
           if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
           if (markdownCtrl) {
-            await markdownCtrl.setContent(renderText(filterForPrefs(state)));
+            await markdownCtrl.setMarkdown(renderText(filterForPrefs(state)));
           }
         },
       );
@@ -1234,7 +1249,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             if (controls.profileConfig.agentKind === 'codex') return;
             const body = renderText(filterForPrefs(state));
             if (body.trim()) {
-              await channel.send(chatId, { markdown: body }, sendOpts);
+              await port.send(chatId, { kind: 'markdown', markdown: body }, sendOpts);
             }
           },
         });
@@ -1242,10 +1257,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         if (controls.profileConfig.agentKind !== 'codex') throw err;
         log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
       }
-      await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
+      await recallIfEmptyStreamedReply(port, progress, filterForPrefs(latestState), scope);
       if (controls.profileConfig.agentKind === 'codex') {
         await sendFinalReply({
-          channel,
+          port,
           chatId,
           scope,
           state: finalReplyState(progress, filterForPrefs(latestState)),
@@ -1267,7 +1282,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         async () => {},
       );
       await sendFinalReply({
-        channel,
+        port,
         chatId,
         scope,
         state:
@@ -1283,7 +1298,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     log.fail('stream', err);
   } finally {
     activePolicyFingerprints.delete(scope);
-    scheduleWorkingReactionCleanup(channel, lastMsg.messageId, reactionPromise);
+    scheduleWorkingReactionCleanup(port, lastMsg.messageId, reactionPromise);
   }
 }
 
@@ -1398,7 +1413,7 @@ function finalReplyState(progress: LazyProgressStream, state: RunState): RunStat
  * `finalState` must already be `filterForPrefs`-projected (what the user sees).
  */
 async function recallIfEmptyStreamedReply(
-  channel: LarkChannel,
+  port: ChannelPort,
   progress: LazyProgressStream,
   finalState: RunState,
   scope: string,
@@ -1409,25 +1424,25 @@ async function recallIfEmptyStreamedReply(
   // up on it), so clean up in the background instead of blocking the run on it.
   if (progress.abandoned()) {
     void progress.settled.then(
-      (result) => recallStreamedMessage(channel, result, scope),
+      (result) => recallStreamedMessage(port, result, scope),
       () => {},
     );
     return;
   }
   if (renderText(finalState).trim() !== '') return;
   const result = await progress.settled.catch(() => undefined);
-  await recallStreamedMessage(channel, result, scope);
+  await recallStreamedMessage(port, result, scope);
 }
 
 async function recallStreamedMessage(
-  channel: LarkChannel,
+  port: ChannelPort,
   streamResult: unknown,
   scope: string,
 ): Promise<void> {
   const messageId = (streamResult as { messageId?: string } | undefined)?.messageId;
   if (!messageId) return;
   try {
-    await channel.recallMessage(messageId);
+    await port.recall(messageId);
     log.info('outbound', 'recall-empty', { scope, messageId });
   } catch (err) {
     log.warn('outbound', 'recall-empty-failed', {
@@ -1439,7 +1454,7 @@ async function recallStreamedMessage(
 }
 
 async function sendFinalReply(input: {
-  channel: LarkChannel;
+  port: ChannelPort;
   chatId: string;
   scope: string;
   state: RunState;
@@ -1458,27 +1473,27 @@ async function sendFinalReply(input: {
   }
 
   if (input.replyMode === 'card') {
-    const result = await input.channel.send(
+    const result = await input.port.send(
       input.chatId,
-      { card: renderCard(input.state, input.cardRenderOptions) },
+      { kind: 'card', card: renderCard(input.state, input.cardRenderOptions) },
       input.sendOpts,
     );
     requireMessageReceipt(result, 'card');
     log.info('outbound', 'sent', outboundLogFields(input, 'card', body, result));
   } else if (input.replyMode === 'markdown') {
     if (body.trim()) {
-      const result = await input.channel.send(
+      const result = await input.port.send(
         input.chatId,
-        { markdown: body },
+        { kind: 'markdown', markdown: body },
         input.sendOpts,
       );
       requireMessageReceipt(result, 'markdown');
       log.info('outbound', 'sent', outboundLogFields(input, 'markdown', body, result));
     }
   } else if (body.trim()) {
-    const result = await input.channel.send(
+    const result = await input.port.send(
       input.chatId,
-      { markdown: body },
+      { kind: 'markdown', markdown: body },
       input.sendOpts,
     );
     requireMessageReceipt(result, 'text');
@@ -1493,7 +1508,7 @@ function requireMessageReceipt(result: { messageId?: string }, type: string): vo
 }
 
 async function sendCotDegradedNotice(input: {
-  channel: LarkChannel;
+  port: ChannelPort;
   chatId: string;
   scope: string;
   sendOpts: { replyTo: string; replyInThread?: boolean };
@@ -1505,9 +1520,9 @@ async function sendCotDegradedNotice(input: {
     replyInThread: input.sendOpts.replyInThread === true,
   });
   try {
-    await input.channel.send(
+    await input.port.send(
       input.chatId,
-      { markdown: 'COT 过程消息更新失败，已停止展示过程；最终答案仍会继续发送。' },
+      { kind: 'markdown', markdown: 'COT 过程消息更新失败，已停止展示过程；最终答案仍会继续发送。' },
       input.sendOpts,
     );
   } catch (err) {
@@ -1760,7 +1775,7 @@ async function runFallbackReply(
 }
 
 function scheduleWorkingReactionCleanup(
-  channel: LarkChannel,
+  port: ChannelPort,
   messageId: string,
   reactionPromise: Promise<string | undefined> | undefined,
 ): void {
@@ -1783,13 +1798,13 @@ function scheduleWorkingReactionCleanup(
       });
       void reactionResult.then((result) => {
         if (!result.ok || !result.reactionId) return;
-        void removeReaction(channel, messageId, result.reactionId);
+        void removeReaction(port, messageId, result.reactionId);
       });
       return;
     }
 
     if (!settled.ok || !settled.reactionId) return;
-    await removeReaction(channel, messageId, settled.reactionId);
+    await removeReaction(port, messageId, settled.reactionId);
   })();
 }
 

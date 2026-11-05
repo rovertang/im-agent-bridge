@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { CommentEvent, NormalizedMessage } from '@larksuite/channel';
 import { handleCommentMention } from '../../../src/bot/comments';
 import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands';
-import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema';
+import { createDefaultProfileConfig, requireLarkProfile, type ProfileConfig } from '../../../src/config/profile-schema';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { ProcessPool } from '../../../src/bot/process-pool';
 import { RunExecutor } from '../../../src/runtime/run-executor';
@@ -140,17 +140,19 @@ function makeControls(opts: {
   access?: Partial<ProfileConfig['access']>;
   defaultWorkspace?: string;
 }): Controls {
-  const profileConfig = createDefaultProfileConfig({
-    agentKind: 'claude',
-    accounts: {
-      app: {
-        id: 'cli_test',
-        secret: '${APP_SECRET}',
-        tenant: 'feishu',
+  const profileConfig = requireLarkProfile(
+    createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: {
+        app: {
+          id: 'cli_test',
+          secret: '${APP_SECRET}',
+          tenant: 'feishu',
+        },
       },
-    },
-    access: opts.access,
-  });
+      access: opts.access,
+    }),
+  );
   if (opts.defaultWorkspace) profileConfig.workspaces.default = opts.defaultWorkspace;
   return {
     profile: 'claude',

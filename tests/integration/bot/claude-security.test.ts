@@ -7,7 +7,11 @@ import { CallbackAuth } from '../../../src/card/callback-auth.js';
 import { CallbackNonceStore } from '../../../src/card/callback-store.js';
 import { handleCardAction } from '../../../src/card/dispatcher.js';
 import type { Controls } from '../../../src/commands/index.js';
-import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type LarkProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { createFakeAgent } from '../../helpers/fake-agent.js';
@@ -160,12 +164,14 @@ async function createHarness(): Promise<Harness> {
   };
 }
 
-function appConfig(): ProfileConfig {
-  return createDefaultProfileConfig({
-    agentKind: 'claude',
-    accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
-    access: { allowedChats: ['oc_group'] },
-  });
+function appConfig(): LarkProfileConfig {
+  return requireLarkProfile(
+    createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
+      access: { allowedChats: ['oc_group'] },
+    }),
+  );
 }
 
 function cardEvent(

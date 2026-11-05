@@ -3,7 +3,12 @@ import { startChannel as realStartChannel, type BridgeChannel } from '../bot/cha
 import type { Controls } from '../commands';
 import type { AppPaths } from '../config/app-paths';
 import { isComplete, type AppConfig } from '../config/schema';
-import type { AgentKind, ProfileConfig } from '../config/profile-schema';
+import {
+  profileChannelKind,
+  type AgentKind,
+  type ProfileChannelKind,
+  type ProfileConfig,
+} from '../config/profile-schema';
 import type { AgentAdapter } from '../agent/types';
 import { log } from '../core/logger';
 import { refreshOwnerControls } from '../policy/owner';
@@ -22,7 +27,7 @@ import {
   acquireProfileRuntimeLock,
   type AcquiredRuntimeLock,
 } from './locks';
-import { resolveProfileRuntime } from './profile-runtime';
+import { resolveProfileRuntime, requireLarkRuntimeCfg } from './profile-runtime';
 import {
   register,
   unregister,
@@ -46,6 +51,7 @@ export interface SupervisorOptions {
 
 export interface ManagedStatus {
   profile: string;
+  channel: ProfileChannelKind;
   agentKind: AgentKind;
   online: boolean;
   pid: number;
@@ -156,6 +162,7 @@ class ManagedProfile {
   status(pid: number): ManagedStatus {
     return {
       profile: this.profile,
+      channel: 'lark',
       agentKind: this.profileConfig.agentKind,
       online: true,
       pid,
@@ -206,7 +213,9 @@ class ManagedProfile {
         profile: this.appPaths.profile,
         allowBootstrap: false,
       });
-      const next = nextRuntime.cfg;
+      // ManagedProfile is the lark control-plane wrapper; it is only ever
+      // constructed for lark profiles (startProfile rejects weixin).
+      const next = requireLarkRuntimeCfg(nextRuntime);
       if (!isComplete(next)) throw new Error('config incomplete after change');
       assertReconnectAgentKindUnchanged(this.profileConfig.agentKind, nextRuntime.profileConfig.agentKind);
       const nextAgent = createRuntimeAgent(nextRuntime.profileConfig, {
@@ -306,7 +315,18 @@ export class Supervisor {
       profile,
       allowBootstrap: false,
     });
-    const { cfg, appPaths, profileConfig, configPath } = runtime;
+    const { appPaths, profileConfig, configPath } = runtime;
+    // The supervisor hosts Lark bridges (BotChannel + Controls + managed cards).
+    // Weixin profiles run through the dedicated single-profile `run` path
+    // instead of the control plane.
+    if (profileChannelKind(profileConfig) === 'weixin') {
+      throw new Error(
+        `控制面 supervisor 暂不支持微信渠道 profile「${profile}」（只托管飞书渠道）：` +
+          `请使用 \`lark-channel-bridge run --profile ${profile}\` 前台运行，` +
+          `或 \`lark-channel-bridge start --profile ${profile}\` 安装独立后台服务。`,
+      );
+    }
+    const cfg = requireLarkRuntimeCfg(runtime);
     if (!isComplete(cfg)) throw new Error(`profile 配置不完整：${profile}`);
 
     // Dedupe by app id — two channels for one app fight over event routing.

@@ -114,6 +114,51 @@ export interface MeetingConfig {
 
 export type LarkCliIdentityPreset = 'bot-only' | 'user-default';
 
+/** Chat platform transport a profile is bound to. */
+export type ProfileChannelKind = 'lark' | 'weixin';
+
+/**
+ * Channel transport selection for a profile. Absent means `lark` (the only
+ * transport implemented so far) and is deliberately not written to disk, so
+ * existing Feishu profiles keep their current on-disk shape.
+ */
+export interface ProfileChannelConfig {
+  kind: ProfileChannelKind;
+}
+
+/**
+ * One WeChat (iLink bot) account bound to a `weixin` profile.
+ *
+ * The bot token is a secret and never lives in `config.json`: it is stored in
+ * the profile state dir (`<profileDir>/weixin/accounts/<id>.json`, mode 0600),
+ * mirroring how Lark app secrets are kept out of the config file.
+ */
+export interface WeixinProfileAccountConfig {
+  /** `ilink_bot_id`, e.g. `4f0d…@im.bot`. */
+  id: string;
+  /** Optional display name shown by `profile list` / `weixin status`. */
+  name?: string;
+  /** API base URL issued at login; defaults to https://ilinkai.weixin.qq.com. */
+  baseUrl?: string;
+}
+
+/** Weixin-channel-specific profile settings. Present only when kind = weixin. */
+export interface WeixinProfileConfig {
+  /** Accounts logged in for this profile. Empty until `weixin login` runs. */
+  accounts: WeixinProfileAccountConfig[];
+  /**
+   * The `ilink_user_id` of the person who scanned the login QR. Bound as the
+   * profile owner (admin commands) on first scan; explicit here so the policy
+   * layer never has to guess.
+   */
+  ownerId?: string;
+  /**
+   * DM allowlist of `ilink_user_id`s. Empty = deny all except the owner —
+   * deliberately fail-closed, because this bot can execute code on the host.
+   */
+  allowedUsers?: string[];
+}
+
 /**
  * Deployment mode — a single switch that binds two behaviors together
  * (see the "团队版 Bot 权限调整" spec):
@@ -150,9 +195,14 @@ export interface ProfileConfig {
   agentKind: AgentKind;
   /** Deployment mode switch. Default 'personal'. See {@link ProfileMode}. */
   mode: ProfileMode;
-  accounts: {
+  /** Absent means `lark`. See {@link ProfileChannelConfig}. */
+  channel?: ProfileChannelConfig;
+  /** Lark/Feishu app credentials. Required for lark profiles, absent for weixin. */
+  accounts?: {
     app: AppCredentials;
   };
+  /** Weixin channel settings. Required for weixin profiles, absent for lark. */
+  weixin?: WeixinProfileConfig;
   secrets?: SecretsConfig;
   preferences: Omit<AppPreferences, 'access' | 'requireMentionInGroup'>;
   access: ProfileAccess;
@@ -185,6 +235,30 @@ export function effectiveLarkCliIdentity(
   return profile.mode === 'team' ? 'bot-only' : profile.larkCli.identityPreset;
 }
 
+/** Effective channel kind; an undeclared `channel` means `lark`. */
+export function profileChannelKind(
+  profile: Pick<ProfileConfig, 'channel'>,
+): ProfileChannelKind {
+  return profile.channel?.kind ?? 'lark';
+}
+
+/**
+ * A profile whose Lark app credentials are known to be present. Used by Lark
+ * runtime code and test harnesses to narrow `ProfileConfig` after the
+ * channel split made `accounts` optional.
+ */
+export type LarkProfileConfig = ProfileConfig & {
+  accounts: { app: AppCredentials };
+};
+
+/** Narrow a profile to its Lark shape, throwing when it is a weixin profile. */
+export function requireLarkProfile(profile: ProfileConfig): LarkProfileConfig {
+  if (!profile.accounts?.app) {
+    throw new Error('profile is not a Lark/Feishu profile (missing accounts.app)');
+  }
+  return profile as LarkProfileConfig;
+}
+
 export interface RootConfig {
   schemaVersion: 2;
   activeProfile: string;
@@ -200,9 +274,13 @@ export interface CreateDefaultProfileConfigInput {
   agentKind: AgentKind;
   /** Deployment mode. Default 'personal'. */
   mode?: ProfileMode;
-  accounts: {
+  channel?: ProfileChannelConfig;
+  /** Required for lark profiles. */
+  accounts?: {
     app: AppCredentials;
   };
+  /** Required for weixin profiles. */
+  weixin?: WeixinProfileConfig;
   preferences?: AppPreferences;
   access?: Partial<ProfileAccess>;
   sandbox?: Partial<SandboxConfig>;
@@ -229,7 +307,9 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     schemaVersion?: unknown;
     agentKind?: unknown;
     mode?: unknown;
+    channel?: unknown;
     accounts?: unknown;
+    weixin?: unknown;
     secrets?: SecretsConfig;
     preferences?: (AppPreferences & { access?: Partial<ProfileAccess> }) | undefined;
     access?: Partial<ProfileAccess>;
@@ -257,7 +337,10 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   if (raw.agentKind !== 'claude' && raw.agentKind !== 'codex' && raw.agentKind !== 'dsh') {
     throw new Error('agentKind must be claude, codex, or dsh');
   }
-  const accounts = normalizeAccounts(raw.accounts);
+  const channel = normalizeChannel(raw.channel);
+  const channelKind = channel?.kind ?? 'lark';
+  const accounts = channelKind === 'lark' ? normalizeAccounts(raw.accounts) : undefined;
+  const weixin = channelKind === 'weixin' ? normalizeWeixin(raw.weixin) : undefined;
   if (raw.agentKind === 'codex' && !raw.codex) {
     throw new Error('codex profile requires codex configuration');
   }
@@ -284,7 +367,9 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     schemaVersion: 2,
     agentKind: raw.agentKind,
     mode: raw.mode === 'team' ? 'team' : 'personal',
-    accounts,
+    ...(channel ? { channel } : {}),
+    ...(accounts ? { accounts } : {}),
+    ...(weixin ? { weixin } : {}),
     ...(raw.secrets ? { secrets: raw.secrets } : {}),
     preferences,
     access,
@@ -308,7 +393,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   };
 }
 
-function normalizeAccounts(input: unknown): ProfileConfig['accounts'] {
+function normalizeAccounts(input: unknown): { app: AppCredentials } {
   if (!input || typeof input !== 'object') {
     throw new Error('accounts.app is required');
   }
@@ -403,6 +488,69 @@ function normalizeCodex(input: CodexConfig & { flags?: unknown }): CodexConfig {
 
 function normalizeComments(_input: unknown): CommentConfig {
   return {};
+}
+
+/**
+ * Preserve a declared channel kind; omit the field entirely when undeclared so
+ * lark profiles stay byte-identical on disk. Unknown kinds are rejected instead
+ * of silently falling back to lark.
+ */
+function normalizeChannel(input: unknown): ProfileChannelConfig | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('channel must be an object');
+  }
+  const kind = (input as { kind?: unknown }).kind;
+  if (kind === 'lark' || kind === 'weixin') return { kind };
+  throw new Error('channel.kind must be lark or weixin');
+}
+
+/**
+ * Weixin channel settings. `accounts` may be empty (profile created before
+ * `weixin login`); login appends the scanned account and binds the owner.
+ */
+function normalizeWeixin(input: unknown): WeixinProfileConfig {
+  if (input === undefined || input === null) {
+    throw new Error('weixin profile requires a weixin configuration block');
+  }
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('weixin must be an object');
+  }
+  const raw = input as {
+    accounts?: unknown;
+    ownerId?: unknown;
+    allowedUsers?: unknown;
+  };
+  const accounts: WeixinProfileAccountConfig[] = [];
+  if (Array.isArray(raw.accounts)) {
+    for (const entry of raw.accounts) {
+      if (!entry || typeof entry !== 'object') continue;
+      const candidate = entry as { id?: unknown; name?: unknown; baseUrl?: unknown };
+      if (typeof candidate.id !== 'string' || !candidate.id.trim()) continue;
+      accounts.push({
+        id: candidate.id.trim(),
+        ...(typeof candidate.name === 'string' && candidate.name.trim()
+          ? { name: candidate.name.trim() }
+          : {}),
+        ...(typeof candidate.baseUrl === 'string' && candidate.baseUrl.trim()
+          ? { baseUrl: candidate.baseUrl.trim() }
+          : {}),
+      });
+    }
+  }
+  return {
+    accounts,
+    ...(typeof raw.ownerId === 'string' && raw.ownerId.trim()
+      ? { ownerId: raw.ownerId.trim() }
+      : {}),
+    ...(Array.isArray(raw.allowedUsers)
+      ? {
+          allowedUsers: raw.allowedUsers.filter(
+            (v): v is string => typeof v === 'string' && v.trim() !== '',
+          ),
+        }
+      : {}),
+  };
 }
 
 /** Defaults keep the in-meeting agent off until a profile opts in. */

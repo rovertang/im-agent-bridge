@@ -51,7 +51,7 @@ export interface FakeChannel {
   createCard(cardJson: unknown): Promise<{ cardId: string }>;
   updateCardById(cardId: string, cardJson: unknown, sequence: number): Promise<void>;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
-  stream(chatId: string, input: unknown, options?: unknown): Promise<void>;
+  stream(chatId: string, input: unknown, options?: unknown): Promise<{ messageId: string }>;
 }
 
 export function createFakeChannel(): FakeChannel {
@@ -140,7 +140,11 @@ export function createFakeChannel(): FakeChannel {
       sent.push({ chatId, content: resolved, options });
       return { messageId: `om_fake_${nextMessage++}` };
     },
-    async stream(chatId: string, input: unknown, options?: unknown): Promise<void> {
+    async stream(
+      chatId: string,
+      input: unknown,
+      options?: unknown,
+    ): Promise<{ messageId: string }> {
       const record: FakeChannelStream = {
         chatId,
         input,
@@ -149,9 +153,11 @@ export function createFakeChannel(): FakeChannel {
         markdownContents: [],
       };
       streams.push(record);
+      const messageId = `om_fake_stream_${nextMessage++}`;
 
       if (isCardStreamInput(input)) {
         await input.card.producer({
+          messageId,
           update: async (card: unknown): Promise<void> => {
             record.cardUpdates.push(card);
           },
@@ -160,11 +166,16 @@ export function createFakeChannel(): FakeChannel {
 
       if (isMarkdownStreamInput(input)) {
         await input.markdown({
+          messageId,
           setContent: async (markdown: string): Promise<void> => {
             record.markdownContents.push(markdown);
           },
         });
       }
+
+      // Mirror the SDK: `stream()` resolves with the message receipt once the
+      // producer finishes. The port reads `messageId` for empty-stream recall.
+      return { messageId };
     },
   };
 
@@ -196,10 +207,12 @@ function extractReceiveId(params: unknown): string | undefined {
 }
 
 interface FakeCardController {
+  readonly messageId: string;
   update(card: unknown): Promise<void>;
 }
 
 interface FakeMarkdownController {
+  readonly messageId: string;
   setContent(markdown: string): Promise<void>;
 }
 

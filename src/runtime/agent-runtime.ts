@@ -5,7 +5,11 @@ import { DEFAULT_DSH_PROVIDER } from '../agent/dsh/patches';
 import { AgentPreflightError, type AgentAvailability, type LocalAgentId } from '../agent/preflight';
 import type { AgentAdapter } from '../agent/types';
 import type { AppPaths } from '../config/app-paths';
-import type { AgentKind, ProfileConfig } from '../config/profile-schema';
+import {
+  profileChannelKind,
+  type AgentKind,
+  type ProfileConfig,
+} from '../config/profile-schema';
 import type { AcquiredRuntimeLock } from './locks';
 
 /**
@@ -23,8 +27,11 @@ export function createRuntimeAgent(
     },
 ): AgentAdapter {
   const larkChannelConfigPath = appPaths.configPath ?? appPaths.configFile;
+  // The injected env tells lark-cli to enter bridge-bound mode for *this*
+  // profile. A weixin profile has no lark-cli projection, so pointing the agent
+  // at one would make any `lark-cli` call fail or pick the wrong workspace.
   const larkChannel =
-    appPaths.rootDir && appPaths.profile
+    profileChannelKind(profileConfig) === 'lark' && appPaths.rootDir && appPaths.profile
       ? {
           profile: appPaths.profile,
           rootDir: appPaths.rootDir,

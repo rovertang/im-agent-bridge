@@ -1,23 +1,26 @@
-import type { LarkChannel } from '@larksuite/channel';
+import type { ChannelPort } from '../channel/port';
 import { log } from '../core/logger';
 
 /**
  * Add a "Typing" reaction (敲键盘) to a message to give text-mode users an
- * instant "I got your message and I'm responding" cue while Claude is still
+ * instant "I got your message and I'm responding" cue while the agent is still
  * thinking. Matches the conventional Feishu UX for "the other side is
  * replying". Card mode doesn't need this — the streaming card already
  * shows a "正在思考…" footer the moment it's posted.
  *
- * Returns the reaction id on success, undefined on any failure. Failures
- * are logged but never thrown — losing a decoration must not break the
- * actual reply flow.
+ * Channel-neutral on purpose: the port's `addReaction`/`removeReaction` are
+ * the "working indicator" primitive (WeChat will map them to `sendTyping`).
+ * Channels without it throw {@link ChannelUnsupportedError}, which the
+ * try/catch swallows — losing a decoration must never break the reply flow.
+ *
+ * Returns the reaction id on success, undefined on any failure.
  */
 export async function addWorkingReaction(
-  channel: LarkChannel,
+  port: ChannelPort,
   messageId: string,
 ): Promise<string | undefined> {
   try {
-    const id = await channel.addReaction(messageId, 'Typing');
+    const id = await port.addReaction(messageId, 'Typing');
     if (id) log.info('reaction', 'added', { messageId, reactionId: id });
     return id;
   } catch (err) {
@@ -32,12 +35,12 @@ export async function addWorkingReaction(
 /** Remove a previously-added reaction. Tolerates errors silently — best
  * effort cleanup; a leftover reaction is harmless. */
 export async function removeReaction(
-  channel: LarkChannel,
+  port: ChannelPort,
   messageId: string,
   reactionId: string,
 ): Promise<void> {
   try {
-    await channel.removeReaction(messageId, reactionId);
+    await port.removeReaction(messageId, reactionId);
     log.info('reaction', 'removed', { messageId, reactionId });
   } catch (err) {
     log.warn('reaction', 'remove-failed', {

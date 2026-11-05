@@ -3,12 +3,17 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
-import type { CommandContext, Controls } from '../../../src/commands/index.js';
-import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import type { Controls } from '../../../src/commands/index.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type LarkProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { createFakeAgent } from '../../helpers/fake-agent.js';
 import { createFakeChannel } from '../../helpers/fake-channel.js';
+import { createFakeChannelPort } from '../../helpers/fake-channel-port.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 
 const saveGate = vi.hoisted(() => ({
@@ -119,7 +124,7 @@ async function createHarness(): Promise<{
     configPath,
     run: (content, overrides = {}) =>
       tryHandleCommand({
-        channel: channel as unknown as CommandContext['channel'],
+        channel: createFakeChannelPort(channel),
         msg: message(content, overrides.mentions ?? []),
         scope: 'chat-1',
         chatMode: 'p2p',
@@ -132,14 +137,14 @@ async function createHarness(): Promise<{
   };
 }
 
-function appConfig(defaultWorkspace: string): ProfileConfig {
+function appConfig(defaultWorkspace: string): LarkProfileConfig {
   const config = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
     access: { admins: ['ou-admin'] },
   });
   config.workspaces.default = defaultWorkspace;
-  return config;
+  return requireLarkProfile(config);
 }
 
 function message(

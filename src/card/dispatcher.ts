@@ -4,6 +4,7 @@ import type { ActiveRuns } from '../bot/active-runs';
 import type { ChatModeCache } from '../bot/chat-mode-cache';
 import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
+import { createLarkChannelPort } from '../channel/lark';
 import type { CallbackAuth } from './callback-auth';
 import { runCommandHandler, type CommandContext, type Controls } from '../commands';
 import { log } from '../core/logger';
@@ -91,7 +92,7 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
     const msg = makeFakeMsg(deps.evt, threadId);
 
     const ctx: CommandContext = {
-      channel: deps.channel,
+      channel: createLarkChannelPort(deps.channel),
       msg,
       scope,
       chatMode: mode,

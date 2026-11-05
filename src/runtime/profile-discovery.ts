@@ -2,11 +2,16 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveAppPaths } from '../config/app-paths';
 import { loadRootConfig, readActiveProfile } from '../config/profile-store';
-import type { AgentKind } from '../config/profile-schema';
+import {
+  profileChannelKind,
+  type AgentKind,
+  type ProfileChannelKind,
+} from '../config/profile-schema';
 
 export interface DiscoveredProfile {
   name: string;
   active: boolean;
+  channel: ProfileChannelKind;
   agentKind: AgentKind;
   profileDir: string;
 }
@@ -47,6 +52,7 @@ export async function listAllProfiles(rootDir?: string): Promise<DiscoveredProfi
       return {
         name,
         active: name === activeProfile,
+        channel: profileChannelKind(profile),
         agentKind: profile.agentKind,
         profileDir: resolveAppPaths({ rootDir: rootPaths.rootDir, profile: name }).profileDir,
       };

@@ -47,6 +47,7 @@ function stubSupervisor(): UiSupervisor {
     list: () =>
       [...online.keys()].map((p) => ({
         profile: p,
+        channel: 'lark' as const,
         agentKind: 'claude' as const,
         online: true,
         pid: process.pid,

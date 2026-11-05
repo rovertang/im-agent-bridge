@@ -7,6 +7,7 @@ import {
   createDefaultProfileConfig,
   effectiveLarkCliIdentity,
   normalizeProfileConfig,
+  profileChannelKind,
 } from '../../../src/config/profile-schema';
 
 const app = {
@@ -572,5 +573,53 @@ describe('profile schema', () => {
       defaultAccess: 'workspace',
       maxAccess: 'workspace',
     });
+  });
+
+  it('omits channel for default lark profiles and treats an absent channel as lark', () => {
+    const cfg = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
+
+    // Default profiles must stay byte-identical on disk: no channel field.
+    expect(cfg).not.toHaveProperty('channel');
+    expect(profileChannelKind(cfg)).toBe('lark');
+  });
+
+  it('preserves an explicitly declared channel kind', () => {
+    const lark = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      channel: { kind: 'lark' },
+    });
+    expect(lark.channel).toEqual({ kind: 'lark' });
+
+    const weixin = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      channel: { kind: 'weixin' },
+      weixin: { accounts: [] },
+    });
+    expect(weixin.channel).toEqual({ kind: 'weixin' });
+    expect(weixin.accounts).toBeUndefined();
+    expect(weixin.weixin).toEqual({ accounts: [] });
+    expect(profileChannelKind(weixin)).toBe('weixin');
+  });
+
+  it('rejects a malformed or unknown channel kind instead of silently falling back to lark', () => {
+    expect(() =>
+      normalizeProfileConfig({
+        schemaVersion: 2,
+        agentKind: 'claude',
+        accounts: { app },
+        channel: { kind: 'telegram' },
+      }),
+    ).toThrow(/channel\.kind must be lark or weixin/);
+    expect(() =>
+      normalizeProfileConfig({
+        schemaVersion: 2,
+        agentKind: 'claude',
+        accounts: { app },
+        channel: 'weixin',
+      }),
+    ).toThrow(/channel must be an object/);
   });
 });

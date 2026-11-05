@@ -1,7 +1,8 @@
-import { isComplete } from '../../config/schema';
+import { isComplete, type AppConfig } from '../../config/schema';
 import { createInterface } from 'node:readline';
 import { paths } from '../../config/paths';
 import { loadRootConfig, readActiveProfile } from '../../config/profile-store';
+import { profileChannelKind } from '../../config/profile-schema';
 import { daemonStderrPath, daemonStdoutPath, SUPERVISOR_SERVICE_ID } from '../../daemon/paths';
 import {
   getServiceAdapter,
@@ -10,8 +11,14 @@ import {
 } from '../../daemon/service-adapter';
 import {
   materializeEnvSecretForService,
+  requireLarkRuntimeCfg,
   resolveProfileRuntime,
 } from '../../runtime/profile-runtime';
+import {
+  appLockTargetForProfile,
+  registryAppIdForProfile,
+} from '../../runtime/channel-identity';
+import { requireWeixinAccountCredential } from '../../runtime/weixin-profile';
 import { isAlive, readAndPrune, type ProcessEntry } from '../../runtime/registry';
 import { checkRuntimeLock, clearRuntimeLockArtifacts, type RuntimeLockMeta } from '../../runtime/locks';
 import { preFlightChecks } from '../preflight';
@@ -81,7 +88,8 @@ function serviceFileExists(serviceId: string): boolean {
 /** Find the live registry entry (with botName) for a classic profile, if any. */
 async function lookupProfileEntry(profile: string): Promise<ProcessEntry | undefined> {
   const runtime = await maybeResolveProfileRuntime(profile);
-  const appId = runtime?.cfg.accounts?.app?.id;
+  if (!runtime) return undefined;
+  const appId = registryAppIdForProfile(runtime.profileConfig);
   if (!appId) return undefined;
   return readAndPrune().find(
     (e) => e.appId === appId && e.profileName === profile && Boolean(e.botName),
@@ -145,12 +153,12 @@ function printServiceFailure(verb: 'started' | 'restarted', stderr: string): voi
   console.error(cleaned);
 }
 
+type ResolvedProfileRuntime = Awaited<ReturnType<typeof resolveProfileRuntime>>;
+
 async function ensureBridgeConfigured(
   opts: ServiceStartOptions,
-): Promise<
-  Pick<Awaited<ReturnType<typeof resolveProfileRuntime>>, 'profile' | 'cfg' | 'profileConfig' | 'appPaths' | 'configPath'>
-> {
-  const { cfg, profile, profileConfig, appPaths, configPath } = await resolveProfileRuntime({
+): Promise<ResolvedProfileRuntime> {
+  const runtime = await resolveProfileRuntime({
     profile: opts.profile,
     agent: opts.agent,
     workspace: opts.workspace,
@@ -166,12 +174,23 @@ async function ensureBridgeConfigured(
       return true;
     },
   });
+  if (profileChannelKind(runtime.profileConfig) === 'weixin') {
+    // Weixin profiles have no Feishu app credentials; require a logged-in
+    // account so `start` fails before installing a daemon that cannot run.
+    await requireWeixinAccountCredential(
+      runtime.profileConfig,
+      runtime.appPaths.profileDir,
+      runtime.profile,
+    );
+    return runtime;
+  }
+  const cfg = requireLarkRuntimeCfg(runtime);
   if (!isComplete(cfg)) {
     console.error('bot 还没配置 app 凭据。');
     console.error('请重新运行 `start` 完成首次扫码向导或传入已有应用信息。');
     process.exit(1);
   }
-  return { profile, cfg, profileConfig, appPaths, configPath };
+  return runtime;
 }
 
 async function assertLockNotHeldByAnotherRuntime(
@@ -296,8 +315,9 @@ async function reportConnectAfter(
   profile: string,
   fn: () => ServiceResultLike,
 ): Promise<void> {
-  const { cfg } = await resolveProfileRuntime({ profile, allowBootstrap: false });
-  const appId = cfg.accounts?.app?.id ?? '';
+  const runtime = await resolveProfileRuntime({ profile, allowBootstrap: false });
+  const isWeixin = profileChannelKind(runtime.profileConfig) === 'weixin';
+  const appId = registryAppIdForProfile(runtime.profileConfig) ?? '';
   const beforePids = new Set(
     readAndPrune()
       .filter((e) => e.appId === appId && e.profileName === profile)
@@ -317,8 +337,9 @@ async function reportConnectAfter(
   if (entry) {
     const verbZh = verb === 'started' ? '已启动' : '已重启';
     const agent = agentDisplay(entry.agentKind);
+    const subject = isWeixin ? '微信账号' : 'bot';
     console.log(
-      `✓ ${verbZh}  bot: ${entry.botName} (${entry.appId})  agent: ${agent.displayName} (${agent.id})  进程: ${entry.id}`,
+      `✓ ${verbZh}  ${subject}: ${entry.botName} (${entry.appId})  agent: ${agent.displayName} (${agent.id})  进程: ${entry.id}`,
     );
     return;
   }
@@ -339,30 +360,45 @@ export async function runServiceStart(opts: ServiceStartOptions = {}): Promise<v
     await runServiceStartWebUi(opts);
     return;
   }
-  const { profile, cfg, profileConfig, appPaths, configPath } = await ensureBridgeConfigured(opts);
+  const runtime = await ensureBridgeConfigured(opts);
+  const { profile, profileConfig, appPaths, configPath } = runtime;
+  const isWeixin = profileChannelKind(profileConfig) === 'weixin';
   const adapter = requireAdapter('start', profile, classicRunArgs(profile));
   await assertLockNotHeldByAnotherRuntime('profile', appPaths.profileLockFile, adapter, opts);
-  await assertLockNotHeldByAnotherRuntime('app', appPaths.appLockFile(cfg.accounts.app.id), adapter, opts);
-  const materializedEnvSecret = await materializeEnvSecretForService({ profile });
-  const bridgeConfig = materializedEnvSecret
-    ? (await resolveProfileRuntime({ profile, allowBootstrap: false })).cfg
-    : cfg;
-  // Run the same lark-cli check as `bridge run` BEFORE writing the
-  // service file — the user is in a TTY here and can answer the install
-  // prompt. The daemon's own preflight (when launchd / systemd spawns
-  // it) will be non-TTY and would silently skip the install.
+  const appLockTarget = appLockTargetForProfile(appPaths, profileConfig);
+  if (appLockTarget) {
+    await assertLockNotHeldByAnotherRuntime('app', appLockTarget, adapter, opts);
+  }
+  let bridgeConfig: AppConfig | undefined;
+  if (!isWeixin) {
+    let cfg = requireLarkRuntimeCfg(runtime);
+    const materializedEnvSecret = await materializeEnvSecretForService({ profile });
+    if (materializedEnvSecret) {
+      cfg = requireLarkRuntimeCfg(await resolveProfileRuntime({ profile, allowBootstrap: false }));
+    }
+    bridgeConfig = cfg;
+  }
+  // Run the same preflight as `bridge run` BEFORE writing the service file —
+  // the user is in a TTY here and can answer install prompts. For a weixin
+  // profile this checks the local account credential + agent binary instead of
+  // lark-cli/app credentials. The daemon's own preflight (when launchd /
+  // systemd spawns it) is non-TTY and would silently skip installs.
   await preFlightChecks({
     skipCheckLarkCli: opts.skipCheckLarkCli,
-    bridgeConfig,
+    ...(bridgeConfig ? { bridgeConfig } : {}),
     profileConfig,
     appPaths,
-    larkChannel: {
-      profile: appPaths.profile,
-      rootDir: appPaths.rootDir,
-      configPath,
-      larkCliConfigDir: appPaths.larkCliConfigDir,
-      larkCliSourceConfigFile: appPaths.larkCliSourceConfigFile,
-    },
+    ...(isWeixin
+      ? {}
+      : {
+          larkChannel: {
+            profile: appPaths.profile,
+            rootDir: appPaths.rootDir,
+            configPath,
+            larkCliConfigDir: appPaths.larkCliConfigDir,
+            larkCliSourceConfigFile: appPaths.larkCliSourceConfigFile,
+          },
+        }),
   });
 
   await adapter.install();
@@ -401,10 +437,19 @@ export async function runServiceStart(opts: ServiceStartOptions = {}): Promise<v
  * simply shows it offline in the console.
  */
 async function runServiceStartWebUi(opts: ServiceStartOptions): Promise<void> {
-  const { profile, cfg, profileConfig, appPaths, configPath } = await ensureBridgeConfigured(opts);
+  const runtime = await ensureBridgeConfigured(opts);
+  const { profile, profileConfig, appPaths, configPath } = runtime;
+  if (profileChannelKind(profileConfig) === 'weixin') {
+    throw new Error(
+      '微信渠道 profile 暂不支持机器级控制面服务（--web-ui 只托管飞书渠道）：' +
+        `请使用 \`lark-channel-bridge start --profile ${profile}\` 安装独立后台服务。`,
+    );
+  }
   const adapter = requireAdapter('start', SUPERVISOR_SERVICE_ID, WEB_UI_RUN_ARGS);
   await materializeEnvSecretForService({ profile });
-  const bridgeConfig = (await resolveProfileRuntime({ profile, allowBootstrap: false })).cfg;
+  const bridgeConfig = requireLarkRuntimeCfg(
+    await resolveProfileRuntime({ profile, allowBootstrap: false }),
+  );
 
   // Same lark-cli check as classic `start`, in this TTY, before writing the
   // service file — the daemon's own preflight would be non-TTY and skip installs.

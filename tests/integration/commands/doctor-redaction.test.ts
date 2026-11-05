@@ -2,12 +2,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
-import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
+import { tryHandleCommand, type Controls } from '../../../src/commands/index.js';
+import { createDefaultProfileConfig, requireLarkProfile } from '../../../src/config/profile-schema.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
+import { createFakeChannelPort } from '../../helpers/fake-channel-port.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -32,7 +33,8 @@ describe('doctor/status visible diagnostics', () => {
   it('keeps doctor self-check replies free of app secrets while showing local paths', async () => {
     const h = await createHarness();
     h.controls.cfg.accounts.app.secret = 'plain-secret-value';
-    h.controls.profileConfig.accounts.app.secret = 'plain-secret-value';
+    const larkProfile = requireLarkProfile(h.controls.profileConfig);
+    larkProfile.accounts.app.secret = 'plain-secret-value';
 
     await h.command('/doctor');
 
@@ -59,11 +61,13 @@ async function createHarness(): Promise<{
   });
   const activeRuns = new ActiveRuns();
   const agent = new FakeAgentAdapter();
-  const profileConfig = createDefaultProfileConfig({
-    agentKind: 'claude',
-    accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
-    access: { admins: ['ou-admin'] },
-  });
+  const profileConfig = requireLarkProfile(
+    createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
+      access: { admins: ['ou-admin'] },
+    }),
+  );
   profileConfig.workspaces.default = tmp.workspace;
   const controls = {
     profile: 'claude',
@@ -84,7 +88,7 @@ async function createHarness(): Promise<{
     controls,
     command: (content: string) =>
       tryHandleCommand({
-        channel: channel as unknown as CommandContext['channel'],
+        channel: createFakeChannelPort(channel),
         msg: message(content),
         scope: 'chat-1',
         chatMode: 'group',

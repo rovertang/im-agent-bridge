@@ -174,7 +174,7 @@ describe('profile retention and export', () => {
     const exported = JSON.parse(lines.join('\n')) as RootConfig;
 
     expect(JSON.stringify(exported)).not.toContain('plain-secret');
-    expect(exported.profiles.claude?.accounts.app.secret).toBe('[REDACTED]');
+    expect(exported.profiles.claude?.accounts?.app.secret).toBe('[REDACTED]');
     await expect(
       runProfileExport('claude', { rootDir: root, includeSecrets: true }),
     ).rejects.toThrow(/--yes/);
@@ -196,7 +196,7 @@ describe('profile retention and export', () => {
         },
       },
     };
-    rootConfig.profiles.claude!.accounts.app.secret = {
+    rootConfig.profiles.claude!.accounts!.app.secret = {
       source: 'exec',
       provider: 'bridge',
       id: secretKeyForApp(appId),
@@ -212,8 +212,8 @@ describe('profile retention and export', () => {
     const secretExport = JSON.parse(lines.pop() ?? '') as RootConfig;
 
     expect(JSON.stringify(safeExport)).not.toContain(exportedSecret);
-    expect(safeExport.profiles.claude?.accounts.app.secret).toBe('[REDACTED]');
-    expect(secretExport.profiles.claude?.accounts.app.secret).toBe(exportedSecret);
+    expect(safeExport.profiles.claude?.accounts?.app.secret).toBe('[REDACTED]');
+    expect(secretExport.profiles.claude?.accounts?.app.secret).toBe(exportedSecret);
   });
 
   it('materializes file app secret only when exporting with secrets', async () => {
@@ -223,7 +223,7 @@ describe('profile retention and export', () => {
     const secretFile = join(root, 'app-secret.txt');
     await writeFile(secretFile, `${exportedSecret}\n`, 'utf8');
     const rootConfig = await readRoot(root);
-    rootConfig.profiles.claude!.accounts.app.secret = {
+    rootConfig.profiles.claude!.accounts!.app.secret = {
       source: 'file',
       id: secretFile,
     };
@@ -237,8 +237,8 @@ describe('profile retention and export', () => {
     const secretExport = JSON.parse(lines.pop() ?? '') as RootConfig;
 
     expect(JSON.stringify(safeExport)).not.toContain(exportedSecret);
-    expect(safeExport.profiles.claude?.accounts.app.secret).toBe('[REDACTED]');
-    expect(secretExport.profiles.claude?.accounts.app.secret).toBe(exportedSecret);
+    expect(safeExport.profiles.claude?.accounts?.app.secret).toBe('[REDACTED]');
+    expect(secretExport.profiles.claude?.accounts?.app.secret).toBe(exportedSecret);
   });
 
   it('writes exports to a new output file and requires --force when it already exists', async () => {

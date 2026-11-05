@@ -5,6 +5,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import {
   materializeEnvSecretForService,
+  requireLarkRuntimeCfg,
   resolveProfileRuntime,
 } from '../../../src/runtime/profile-runtime';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
@@ -1122,7 +1123,7 @@ describe('profile runtime resolver', () => {
       profile: 'codex-dev',
       allowBootstrap: false,
     });
-    const projectionPath = await writeLarkCliSourceProjection(runtime.cfg, appPaths);
+    const projectionPath = await writeLarkCliSourceProjection(requireLarkRuntimeCfg(runtime), appPaths);
     const projectionText = await readFile(projectionPath, 'utf8');
     const projection = JSON.parse(projectionText) as {
       accounts: { app: { secret: unknown } };

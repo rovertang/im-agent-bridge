@@ -67,7 +67,13 @@ describe('Supervisor', () => {
     expect(started).toContain('claude');
     const list = sup.list();
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ profile: 'claude', online: true, pid: process.pid, botName: 'bot-claude' });
+    expect(list[0]).toMatchObject({
+      profile: 'claude',
+      channel: 'lark',
+      online: true,
+      pid: process.pid,
+      botName: 'bot-claude',
+    });
   });
 
   it('hosts multiple profiles at once', async () => {
@@ -95,5 +101,30 @@ describe('Supervisor', () => {
     await sup.startProfile('claude');
     await sup.startProfile('claude');
     expect(started.filter((p) => p === 'claude')).toHaveLength(1);
+  });
+
+  it('refuses to host a weixin profile and points at the single-profile run path', async () => {
+    const configPath = join(root, 'config.json');
+    const rc = (await loadRootConfig(configPath))!;
+    await mkdir(join(root, 'profiles', 'wx'), { recursive: true });
+    rc.profiles.wx = createDefaultProfileConfig({
+      agentKind: 'claude',
+      channel: { kind: 'weixin' },
+      weixin: { accounts: [] },
+    });
+    await saveRootConfig(rc, configPath);
+
+    let error: Error | undefined;
+    try {
+      await sup.startProfile('wx');
+    } catch (err) {
+      if (!(err instanceof Error)) throw err;
+      error = err;
+    }
+
+    expect(error).toBeDefined();
+    expect(error?.message).toContain('微信渠道');
+    expect(error?.message).toContain('run --profile wx');
+    expect(sup.isOnline('wx')).toBe(false);
   });
 });

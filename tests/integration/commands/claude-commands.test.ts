@@ -4,12 +4,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
-import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import { tryHandleCommand, type Controls } from '../../../src/commands/index.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type LarkProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { createFakeAgent, type FakeAgentRun } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
+import { createFakeChannelPort } from '../../helpers/fake-channel-port.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 
 interface Harness {
@@ -335,7 +340,7 @@ async function createHarness(): Promise<Harness> {
 
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({
-      channel: channel as unknown as CommandContext['channel'],
+      channel: createFakeChannelPort(channel),
       msg: message(content),
       scope: 'chat-1',
       chatMode: 'p2p',
@@ -355,14 +360,14 @@ async function createHarness(): Promise<Harness> {
   return { tmp, channel, sessions, workspaces, activeRuns, agent, controls, cleanup, run };
 }
 
-function appConfig(defaultWorkspace: string): ProfileConfig {
+function appConfig(defaultWorkspace: string): LarkProfileConfig {
   const config = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
     access: { admins: ['ou-user'] },
   });
   config.workspaces.default = defaultWorkspace;
-  return config;
+  return requireLarkProfile(config);
 }
 
 function message(content: string): NormalizedMessage {
@@ -406,14 +411,15 @@ async function writeLarkCliTarget(
     'lark-channel',
     'config.json',
   );
+  const larkCliProfile = requireLarkProfile(h.controls.profileConfig);
   await mkdir(dirname(target), { recursive: true });
   await writeFile(
     target,
     JSON.stringify({
       apps: [
         {
-          appId: h.controls.profileConfig.accounts.app.id,
-          brand: h.controls.profileConfig.accounts.app.tenant,
+          appId: larkCliProfile.accounts.app.id,
+          brand: larkCliProfile.accounts.app.tenant,
           defaultAs: app.defaultAs,
           strictMode: app.strictMode,
           users: app.users,

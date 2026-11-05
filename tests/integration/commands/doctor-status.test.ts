@@ -4,13 +4,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
-import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import { tryHandleCommand, type Controls } from '../../../src/commands/index.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type LarkProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter, type FakeAgentRun } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
+import { createFakeChannelPort } from '../../helpers/fake-channel-port.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 
 interface Harness {
@@ -167,7 +172,7 @@ async function createHarness(options: {
 
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({
-      channel: channel as unknown as CommandContext['channel'],
+      channel: createFakeChannelPort(channel),
       msg: message(content),
       scope: 'chat-1',
       chatMode: 'p2p',
@@ -188,7 +193,7 @@ async function createHarness(options: {
   return { tmp, channel, sessions, workspaces, activeRuns, pool, agent, controls, run };
 }
 
-function appConfig(defaultWorkspace: string | undefined): ProfileConfig {
+function appConfig(defaultWorkspace: string | undefined): LarkProfileConfig {
   const config = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
@@ -196,7 +201,7 @@ function appConfig(defaultWorkspace: string | undefined): ProfileConfig {
     sandbox: { defaultMode: 'read-only', maxMode: 'workspace-write' },
   });
   if (defaultWorkspace) config.workspaces.default = defaultWorkspace;
-  return config;
+  return requireLarkProfile(config);
 }
 
 function message(content: string): NormalizedMessage {

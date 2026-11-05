@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createDefaultProfileConfig,
+  normalizeProfileConfig,
   type RootConfig,
 } from '../../../src/config/profile-schema';
 import { createRootConfig, loadRootConfig, saveRootConfig } from '../../../src/config/profile-store';
@@ -129,6 +130,7 @@ describe('profile store canonical serialization', () => {
       maxAccess: 'full',
     });
     expect(savedProfile).not.toHaveProperty('runtimeOnlyFutureField');
+    expect(savedProfile).not.toHaveProperty('channel');
     expect(savedProfile).not.toHaveProperty('permissionSource');
     expect(savedProfile).not.toHaveProperty('sandbox');
   });
@@ -275,6 +277,34 @@ describe('profile store canonical serialization', () => {
 
     const loaded = await loadRootConfig(configPath);
     expect(loaded?.profiles.dsh?.dsh).toEqual(profile.dsh);
+  });
+
+  it('persists the weixin channel kind across save→load round-trip', async () => {
+    const root = await tmpRoot();
+    const configPath = join(root, 'config.json');
+    const profile = createDefaultProfileConfig({
+      agentKind: 'claude',
+      channel: { kind: 'weixin' },
+      weixin: { accounts: [] },
+    });
+
+    await saveRootConfig({
+      schemaVersion: 2,
+      activeProfile: 'weixin',
+      preferences: {},
+      profiles: { weixin: profile },
+    }, configPath);
+
+    // Regression: the canonical serializer whitelists profile fields, so a
+    // missing `channel` entry would silently rewrite the profile back to lark.
+    const saved = JSON.parse(await readFile(configPath, 'utf8'));
+    expect(saved.profiles.weixin.channel).toEqual({ kind: 'weixin' });
+    expect(saved.profiles.weixin.weixin).toEqual({ accounts: [] });
+    expect(saved.profiles.weixin.accounts).toBeUndefined();
+
+    const loaded = await loadRootConfig(configPath);
+    expect(loaded?.profiles.weixin?.channel).toEqual({ kind: 'weixin' });
+    expect(loaded?.profiles.weixin?.weixin).toEqual({ accounts: [] });
   });
 
   it('marks newly created roots as already evaluated for permission default migration', () => {

@@ -15,9 +15,10 @@ import { basename, dirname, join } from 'node:path';
 import * as lockfile from 'proper-lockfile';
 import { resolveAppPaths } from '../config/app-paths';
 import { paths } from '../config/paths';
-import type { AgentKind } from '../config/profile-schema';
+import type { AgentKind, ProfileChannelKind } from '../config/profile-schema';
 import type { TenantBrand } from '../config/schema';
 import { writeFileAtomic } from '../platform/atomic-write';
+import { appLockIdForChannel } from './channel-identity';
 import { checkRuntimeLock } from './locks';
 
 /**
@@ -32,12 +33,17 @@ import { checkRuntimeLock } from './locks';
  * prune stale entries using runtime lock state, then rewrite atomically.
  */
 
+export type RegistryTenant = TenantBrand | 'weixin';
+
 export interface ProcessEntry {
   /** 4-char random hex, stable for this process's lifetime. */
   id: string;
   pid: number;
+  /** Lark app id for lark profiles, WeChat account id for weixin profiles. */
   appId: string;
-  tenant: TenantBrand;
+  tenant: RegistryTenant;
+  /** Channel this process serves. Absent = lark (entries from older versions). */
+  channel?: ProfileChannelKind;
   profileName: string;
   agentKind: AgentKind;
   configPath: string;
@@ -62,7 +68,8 @@ function isValidEntry(e: unknown): e is ProcessEntry {
     typeof x.id === 'string' &&
     typeof x.pid === 'number' &&
     typeof x.appId === 'string' &&
-    (x.tenant === 'feishu' || x.tenant === 'lark') &&
+    (x.tenant === 'feishu' || x.tenant === 'lark' || x.tenant === 'weixin') &&
+    (x.channel === undefined || x.channel === 'lark' || x.channel === 'weixin') &&
     typeof x.profileName === 'string' &&
     (x.agentKind === 'claude' || x.agentKind === 'codex' || x.agentKind === 'dsh') &&
     typeof x.configPath === 'string' &&
@@ -114,7 +121,9 @@ export function generateShortId(): string {
 
 export interface RegisterArgs {
   appId: string;
-  tenant: TenantBrand;
+  tenant: RegistryTenant;
+  /** Channel served by this process. Defaults to lark. */
+  channel?: ProfileChannelKind;
   profileName?: string;
   agentKind?: AgentKind;
   configPath: string;
@@ -136,6 +145,7 @@ export async function register(args: RegisterArgs): Promise<ProcessEntry> {
     pid: process.pid,
     appId: args.appId,
     tenant: args.tenant,
+    channel: args.channel ?? 'lark',
     profileName: args.profileName ?? 'claude',
     agentKind: args.agentKind ?? 'claude',
     configPath: args.configPath,
@@ -352,7 +362,7 @@ async function isEntryStale(entry: ProcessEntry, registryFile: string): Promise<
   const appPaths = resolveAppPaths({ rootDir, profile: entry.profileName });
   const [profileLock, appLock] = await Promise.all([
     checkRuntimeLock(appPaths.profileLockFile),
-    checkRuntimeLock(appPaths.appLockFile(entry.appId)),
+    checkRuntimeLock(appPaths.appLockFile(appLockIdForChannel(entry.channel, entry.appId))),
   ]);
   return !lockMatchesEntry(profileLock, entry, 'profile') || !lockMatchesEntry(appLock, entry, 'app');
 }
@@ -372,7 +382,9 @@ function lockMatchesEntry(
   if (lock.meta.profile !== entry.profileName) return false;
   if (lock.meta.agentKind !== entry.agentKind) return false;
   if (lock.meta.pid !== entry.pid) return false;
-  if (kind === 'app' && lock.meta.appId !== entry.appId) return false;
+  if (kind === 'app' && lock.meta.appId !== appLockIdForChannel(entry.channel, entry.appId)) {
+    return false;
+  }
   return true;
 }
 

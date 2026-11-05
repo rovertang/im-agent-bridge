@@ -9,7 +9,7 @@ import {
   migrateV1ToV2,
   type ActiveBridgeMigrationProcess,
 } from '../../../src/config/migrate-v2';
-import type { RootConfig } from '../../../src/config/profile-schema';
+import { requireLarkProfile, type RootConfig } from '../../../src/config/profile-schema';
 import { resolveProfileRuntime } from '../../../src/runtime/profile-runtime';
 import { writeVersionExecutable } from '../../helpers/fake-executable';
 
@@ -345,7 +345,7 @@ describe('profile v2 migration', () => {
 
     expect(handled).toHaveLength(1);
     expect(runtime.profile).toBe('claude');
-    expect(runtime.profileConfig.accounts.app.id).toBe('cli_test');
+    expect(requireLarkProfile(runtime.profileConfig).accounts.app.id).toBe('cli_test');
     const next = (await readJson(join(root, 'config.json'))) as RootConfig;
     expect(next.schemaVersion).toBe(2);
   });

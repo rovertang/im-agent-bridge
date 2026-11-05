@@ -16,12 +16,16 @@ import {
   writeActiveProfile,
 } from '../../config/profile-store';
 import type { RootConfig } from '../../config/profile-schema';
+import { profileChannelKind } from '../../config/profile-schema';
 import { resolveAppSecret } from '../../config/secret-resolver';
 import { writeFileAtomic } from '../../platform/atomic-write';
 import { acquireProfileRuntimeLock, checkRuntimeLock } from '../../runtime/locks';
 import { readAndPrune } from '../../runtime/registry';
 import { listAllProfiles } from '../../runtime/profile-discovery';
-import { resolveProfileRuntime } from '../../runtime/profile-runtime';
+import {
+  normalizeProfileChannelOption,
+  resolveProfileRuntime,
+} from '../../runtime/profile-runtime';
 
 export interface ProfileCommandOptions {
   rootDir?: string;
@@ -33,6 +37,8 @@ export interface ProfileCreateOptions extends ProfileCommandOptions {
   appId?: string;
   appSecret?: string;
   tenant?: string;
+  /** Channel kind for the new profile. Undefined = lark (unchanged default). */
+  channel?: string;
 }
 
 export interface ProfileRemoveOptions extends ProfileCommandOptions {
@@ -68,6 +74,7 @@ export async function runProfileList(opts: ProfileCommandOptions = {}): Promise<
     return {
       active: profile.active ? '*' : '',
       profile: profile.name,
+      channel: profile.channel,
       agent: profile.agentKind,
       status: holders.length > 0 ? holders.join(', ') : '-',
     };
@@ -75,11 +82,13 @@ export async function runProfileList(opts: ProfileCommandOptions = {}): Promise<
   const widths = {
     active: Math.max('ACTIVE'.length, ...rows.map((row) => row.active.length)),
     profile: Math.max('PROFILE'.length, ...rows.map((row) => row.profile.length)),
+    channel: Math.max('CHANNEL'.length, ...rows.map((row) => row.channel.length)),
     agent: Math.max('AGENT'.length, ...rows.map((row) => row.agent.length)),
   };
   console.log(formatProfileListRow({
     active: 'ACTIVE',
     profile: 'PROFILE',
+    channel: 'CHANNEL',
     agent: 'AGENT',
     status: 'STATUS',
   }, widths));
@@ -89,12 +98,13 @@ export async function runProfileList(opts: ProfileCommandOptions = {}): Promise<
 }
 
 function formatProfileListRow(
-  row: { active: string; profile: string; agent: string; status: string },
-  widths: { active: number; profile: number; agent: number },
+  row: { active: string; profile: string; channel: string; agent: string; status: string },
+  widths: { active: number; profile: number; channel: number; agent: number },
 ): string {
   return [
     row.active.padEnd(widths.active),
     row.profile.padEnd(widths.profile),
+    row.channel.padEnd(widths.channel),
     row.agent.padEnd(widths.agent),
     row.status,
   ].join('  ');
@@ -106,6 +116,7 @@ export async function runProfileCreate(
 ): Promise<void> {
   const rootDir = opts.rootDir ?? paths.rootDir;
   const configFile = resolveAppPaths({ rootDir }).configFile;
+  const requestedChannel = normalizeProfileChannelOption(opts.channel);
   await withConfigFileLock(configFile, async () => {
     const root = await loadRootConfig(configFile);
     const existing = root?.profiles[name];
@@ -119,6 +130,12 @@ export async function runProfileCreate(
             `choose another name, or remove profile ${name} before creating a ${requested} profile.`,
         );
       }
+      if (requestedChannel && profileChannelKind(existing) !== requestedChannel) {
+        throw new Error(
+          `profile ${name} already exists with channel ${profileChannelKind(existing)}, ` +
+            `but profile create requested --channel ${requestedChannel}.`,
+        );
+      }
       throw new Error(`profile already exists: ${name}`);
     }
 
@@ -130,6 +147,7 @@ export async function runProfileCreate(
       appId: opts.appId,
       appSecret: opts.appSecret,
       tenant: opts.tenant,
+      ...(requestedChannel ? { channel: requestedChannel } : {}),
       allowBootstrap: true,
     });
   });
@@ -236,11 +254,13 @@ export async function runProfileExport(
   if (!selected) throw new Error(`profile not found: ${name}`);
 
   const profile = cloneJson(selected);
-  if (opts.includeSecrets) {
+  if (opts.includeSecrets && profile.accounts) {
     profile.accounts.app.secret = await resolveAppSecret(
       runtimeProfileConfig(root, name),
       resolveAppPaths({ rootDir, profile: name }),
     );
+  } else if (opts.includeSecrets) {
+    console.log('ℹ 微信渠道账号凭证不在 config.json 中，导出内容不包含 token。');
   }
   const exportedBase: RootConfig = {
     schemaVersion: 2,
@@ -256,7 +276,7 @@ export async function runProfileExport(
     : exportedBase;
   if (!opts.includeSecrets) {
     delete profile.secrets;
-    profile.accounts.app.secret = '[REDACTED]';
+    if (profile.accounts) profile.accounts.app.secret = '[REDACTED]';
   }
   const body = formatRootConfig(exported);
 

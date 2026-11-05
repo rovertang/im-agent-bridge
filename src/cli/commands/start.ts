@@ -14,6 +14,7 @@ import { startChannel, type BridgeChannel } from '../../bot/channel';
 import type { Controls } from '../../commands';
 import type { AppPaths } from '../../config/app-paths';
 import {
+  profileChannelKind,
   type AgentKind,
   type ProfileConfig,
 } from '../../config/profile-schema';
@@ -45,7 +46,12 @@ import {
   type AcquiredRuntimeLock,
   type RuntimeLockMeta,
 } from '../../runtime/locks';
-import { resolveProfileRuntime } from '../../runtime/profile-runtime';
+import {
+  requireLarkRuntimeCfg,
+  resolveProfileRuntime,
+  type ProfileRuntime,
+} from '../../runtime/profile-runtime';
+import { startWeixinProfile, type WeixinProfileHandle } from '../../runtime/weixin-profile';
 import {
   assertReconnectAgentKindUnchanged,
   checkRuntimeAgentAvailability,
@@ -134,8 +140,13 @@ async function runClassic(opts: StartOptions): Promise<void> {
     allowBootstrap: true,
     handleActiveBridgeMigrationConflict: migrationConflictHandler,
   });
-  const { cfg, configPath, appPaths } = runtime;
+  const { configPath, appPaths } = runtime;
   configureLogger({ logsDir: appPaths.logsDir });
+  if (profileChannelKind(runtime.profileConfig) === 'weixin') {
+    await runWeixinClassic(runtime, opts);
+    return;
+  }
+  const cfg = requireLarkRuntimeCfg(runtime);
   await loadTelemetryAdapter({
     version: pkg.version,
     appId: cfg.accounts.app.id,
@@ -167,6 +178,61 @@ async function runClassic(opts: StartOptions): Promise<void> {
 }
 
 /**
+ * Foreground run for a `weixin` profile: no Feishu app credentials and no
+ * supervisor control plane — the iLink transport plus the WeChat session
+ * runner, held alive until a terminal signal arrives.
+ */
+async function runWeixinClassic(runtime: ProfileRuntime, opts: StartOptions): Promise<void> {
+  await gcOldLogs();
+  let handle: WeixinProfileHandle | undefined;
+  // Same lock-conflict UX as the lark path: offer to stop the holder and retry.
+  for (;;) {
+    try {
+      handle = await startWeixinProfile(runtime);
+      break;
+    } catch (err) {
+      const action = await handleRuntimeLockConflict(err, opts);
+      if (action === 'retry') continue;
+      if (action === 'cancel') {
+        process.exit(0);
+      }
+      throw err;
+    }
+  }
+  if (!handle) throw new Error('weixin transport did not start');
+  console.log(
+    `✓ profile「${runtime.profile}」微信渠道已上线（文本对话 + /help /new /stop /status）`,
+  );
+  console.log('  在微信里直接发消息即可；Ctrl-C 退出。');
+  const signal = await waitForShutdownSignal();
+  console.log(`\n收到 ${signal}，正在关闭微信渠道...`);
+  await handle.stop();
+}
+
+/**
+ * Park until SIGINT/SIGTERM; resolves with the signal that fired.
+ *
+ * A signal listener alone does not keep Node's event loop alive, so the
+ * process would exit immediately after "transport online" and leave its
+ * registry entry/locks behind. Hold a (ref'd) interval for the duration.
+ */
+function waitForShutdownSignal(): Promise<NodeJS.Signals> {
+  return new Promise((resolve) => {
+    const keepAlive = setInterval(() => {}, 60_000);
+    const onSigint = (): void => finish('SIGINT');
+    const onSigterm = (): void => finish('SIGTERM');
+    const finish = (signal: NodeJS.Signals): void => {
+      clearInterval(keepAlive);
+      process.off('SIGINT', onSigint);
+      process.off('SIGTERM', onSigterm);
+      resolve(signal);
+    };
+    process.on('SIGINT', onSigint);
+    process.on('SIGTERM', onSigterm);
+  });
+}
+
+/**
  * Supervisor console mode: one process per machine hosting every profile, with
  * a local web console. A second `run --web-ui` / `start --web-ui` detects the
  * running control plane and prints its URL instead of launching a duplicate.
@@ -177,7 +243,14 @@ async function runSupervisorConsole(opts: StartOptions): Promise<void> {
     allowBootstrap: true,
     handleActiveBridgeMigrationConflict: migrationConflictHandler,
   });
-  const cfg = runtime.cfg;
+  if (profileChannelKind(runtime.profileConfig) === 'weixin') {
+    throw new Error(
+      '微信渠道 profile 暂不支持机器级控制面（--web-ui 只托管飞书渠道）：' +
+        `请使用 \`lark-channel-bridge run --profile ${runtime.profile}\` 前台运行，` +
+        `或 \`lark-channel-bridge start --profile ${runtime.profile}\` 安装独立后台服务。`,
+    );
+  }
+  const cfg = requireLarkRuntimeCfg(runtime);
   const configPath = runtime.configPath;
   const appPaths = runtime.appPaths;
   configureLogger({ logsDir: appPaths.hostLogsDir });

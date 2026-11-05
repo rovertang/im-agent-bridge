@@ -4,12 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import type { AgentRun } from '../../../src/agent/types';
 import { ActiveRuns } from '../../../src/bot/active-runs';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index';
-import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
+import { tryHandleCommand, type Controls } from '../../../src/commands/index';
+import { createDefaultProfileConfig, requireLarkProfile } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createFakeChannel } from '../../helpers/fake-channel';
+import { createFakeChannelPort } from '../../helpers/fake-channel-port';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -82,11 +83,13 @@ async function createHarness(): Promise<{
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const activeRuns = new ActiveRuns();
   const agent = new FakeAgentAdapter();
-  const profileConfig = createDefaultProfileConfig({
-    agentKind: 'claude',
-    accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
-    access: { admins: ['ou-admin'] },
-  });
+  const profileConfig = requireLarkProfile(
+    createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
+      access: { admins: ['ou-admin'] },
+    }),
+  );
   const restart = vi.fn(async () => {});
   const controls = {
     profile: 'claude',
@@ -106,7 +109,7 @@ async function createHarness(): Promise<{
     restart,
     command: (content: string) =>
       tryHandleCommand({
-        channel: channel as unknown as CommandContext['channel'],
+        channel: createFakeChannelPort(channel),
         msg: message(content),
         scope: 'chat-1',
         chatMode: 'p2p',

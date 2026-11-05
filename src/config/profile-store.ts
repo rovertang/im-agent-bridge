@@ -9,7 +9,7 @@ import {
   type ProfileConfig,
   type RootConfig,
 } from './profile-schema';
-import type { AppConfig } from './schema';
+import type { AppConfig, AppCredentials } from './schema';
 
 export async function loadRootConfig(path: string): Promise<RootConfig | undefined> {
   try {
@@ -50,7 +50,9 @@ type StoredProfileConfig = Pick<
   | 'schemaVersion'
   | 'agentKind'
   | 'mode'
+  | 'channel'
   | 'accounts'
+  | 'weixin'
   | 'secrets'
   | 'preferences'
   | 'access'
@@ -90,7 +92,9 @@ function serializeProfileConfig(profile: ProfileConfig): StoredProfileConfig {
     schemaVersion: profile.schemaVersion,
     agentKind: profile.agentKind,
     mode: profile.mode,
-    accounts: profile.accounts,
+    ...(profile.channel ? { channel: profile.channel } : {}),
+    ...(profile.accounts ? { accounts: profile.accounts } : {}),
+    ...(profile.weixin ? { weixin: profile.weixin } : {}),
     ...(profile.secrets ? { secrets: profile.secrets } : {}),
     preferences: profile.preferences,
     access: profile.access,
@@ -147,13 +151,21 @@ export async function writeActiveProfile(rootDir: string, profile: string): Prom
   await writeFileAtomic(activeProfileFile, `${profile}\n`, { mode: 0o600 });
 }
 
-export function runtimeProfileConfig(root: RootConfig, profile: string): AppConfig & ProfileConfig {
+/** A Lark profile config with its app credentials narrowed to present. */
+export type LarkRuntimeConfig = AppConfig &
+  ProfileConfig & { accounts: { app: AppCredentials } };
+
+export function runtimeProfileConfig(root: RootConfig, profile: string): LarkRuntimeConfig {
   const cfg = root.profiles[profile];
   if (!cfg) {
     throw new Error(`profile not found: ${profile}`);
   }
+  if (!cfg.accounts?.app) {
+    throw new Error(`profile 「${profile}」不是飞书渠道（缺少 accounts.app）`);
+  }
   return {
     ...cfg,
+    accounts: cfg.accounts,
     ...(cfg.secrets ?? root.secrets ? { secrets: cfg.secrets ?? root.secrets } : {}),
   };
 }

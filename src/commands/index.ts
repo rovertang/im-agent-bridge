@@ -6,6 +6,12 @@ import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
 import { capabilityFor, type AgentCapabilityId } from '../agent/capability';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
 import type { AgentAdapter } from '../agent/types';
+import { larkChannelOf } from '../channel/lark';
+import {
+  supportsFeature,
+  type ChannelCapabilities,
+  type ChannelPort,
+} from '../channel/port';
 import type { ActiveRuns } from '../bot/active-runs';
 import {
   accountCurrentCard,
@@ -115,7 +121,7 @@ export interface Controls {
 }
 
 export interface CommandContext {
-  channel: LarkChannel;
+  channel: ChannelPort;
   msg: NormalizedMessage;
   /**
    * Session scope string. For p2p / regular group it equals `msg.chatId`;
@@ -165,6 +171,7 @@ const RESUME_CANDIDATE_TTL_MS = 10 * 60 * 1000;
 const resumeCandidates = new Map<string, ResumeCandidate>();
 const AUDIT_SAFE_COMMAND_REPLY = '命令已处理。';
 const RESUME_APPLIED_REPLY = '已完成，请继续发送下一条消息。';
+const FEISHU_ONLY_COMMAND_REPLY = '该命令仅在飞书渠道可用。';
 
 const handlers: Record<string, Handler> = {
   '/new': handleNew,
@@ -279,7 +286,11 @@ export async function runCommandHandler(
  */
 async function reply(ctx: CommandContext, markdown: string): Promise<void> {
   try {
-    await ctx.channel.send(ctx.msg.chatId, { markdown }, commandReplyOptions(ctx));
+    await ctx.channel.send(
+      ctx.msg.chatId,
+      { kind: 'markdown', markdown },
+      commandReplyOptions(ctx),
+    );
   } catch (err) {
     log.fail('command', err, { step: 'reply' });
     reportMetric('command_fail', 1, { step: 'reply' });
@@ -287,7 +298,7 @@ async function reply(ctx: CommandContext, markdown: string): Promise<void> {
     try {
       await ctx.channel.send(
         ctx.msg.chatId,
-        { markdown: AUDIT_SAFE_COMMAND_REPLY },
+        { kind: 'markdown', markdown: AUDIT_SAFE_COMMAND_REPLY },
         commandReplyOptions(ctx),
       );
     } catch (fallbackErr) {
@@ -310,6 +321,24 @@ function isMessageAuditReject(err: unknown): boolean {
   if (record.code === 230028) return true;
   const message = String(record.message ?? record.msg ?? '');
   return /not pass the audit/i.test(message);
+}
+
+/**
+ * Resolve the raw Lark channel for handlers that must call Feishu-only APIs
+ * (chat management, CardKit, meetings, app scopes). When the active channel
+ * does not advertise the required feature this replies with a user-facing
+ * "Feishu only" notice and returns `undefined`, so the handler can bail out
+ * instead of crashing on an unsupported API.
+ */
+async function requireLarkChannel(
+  ctx: CommandContext,
+  ...features: Array<keyof ChannelCapabilities['features']>
+): Promise<LarkChannel | undefined> {
+  const lark = larkChannelOf(ctx.channel);
+  const supported = features.every((feature) => supportsFeature(ctx.channel, feature));
+  if (lark && supported) return lark;
+  await reply(ctx, FEISHU_ONLY_COMMAND_REPLY);
+  return undefined;
 }
 
 function expandTilde(p: string): string {
@@ -343,13 +372,15 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
 }
 
 async function handleNewChat(rawName: string, ctx: CommandContext): Promise<void> {
+  const lark = await requireLarkChannel(ctx, 'chatManagement');
+  if (!lark) return;
   const sourceCwd = effectiveWorkspaceCwd(ctx);
   const name = rawName || defaultChatName(ctx.agent.displayName);
 
   let created;
   try {
     created = await createBoundChat({
-      channel: ctx.channel,
+      channel: lark,
       name,
       inviteOpenId: ctx.msg.senderId,
     });
@@ -370,7 +401,7 @@ async function handleNewChat(rawName: string, ctx: CommandContext): Promise<void
     ? `🎉 群已建好，cwd 继承自原群：\`${sourceCwd}\`\n\n@我 + 任意消息开始对话。`
     : '🎉 群已建好。\n\n@我 + 任意消息开始对话。';
   try {
-    await ctx.channel.send(created.chatId, { markdown: welcome });
+    await ctx.channel.send(created.chatId, { kind: 'markdown', markdown: welcome });
   } catch (err) {
     console.warn('[new-chat] welcome message failed:', err);
   }
@@ -430,7 +461,7 @@ async function handleWsList(ctx: CommandContext): Promise<void> {
     currentCwd,
     named,
   );
-  await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
+  await ctx.channel.send(ctx.msg.chatId, { kind: 'card', card }, commandReplyOptions(ctx));
 }
 
 async function handleWsSave(name: string, ctx: CommandContext): Promise<void> {
@@ -576,7 +607,7 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
         };
       });
       const card = resumeCard(cwd, entries);
-      await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
+      await ctx.channel.send(ctx.msg.chatId, { kind: 'card', card }, commandReplyOptions(ctx));
       return;
     }
     if (entry?.threadId && identity) {
@@ -588,7 +619,7 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
       return;
     }
     const card = resumeCard(cwd, []);
-    await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
+    await ctx.channel.send(ctx.msg.chatId, { kind: 'card', card }, commandReplyOptions(ctx));
     return;
   }
 
@@ -606,7 +637,7 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
     current: s.sessionId === currentSession?.sessionId,
   }));
   const card = resumeCard(cwd, entries);
-  await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
+  await ctx.channel.send(ctx.msg.chatId, { kind: 'card', card }, commandReplyOptions(ctx));
 }
 
 async function applyResume(sessionId: string, ctx: CommandContext): Promise<void> {
@@ -777,6 +808,10 @@ function runtimeAccessStatus(
 }
 
 async function larkCliStatus(ctx: CommandContext): Promise<'app' | 'user-ready' | 'user-missing' | 'check-failed'> {
+  // Only lark profiles have app credentials to read; a text-only channel has
+  // no lark-cli projection, so report the app-only state instead of probing.
+  const larkApp = ctx.controls.profileConfig.accounts?.app;
+  if (!larkApp) return 'app';
   const appPaths = commandProfilePaths(ctx);
   try {
     const raw = JSON.parse(await readFile(appPaths.larkCliTargetConfigFile, 'utf8')) as {
@@ -790,8 +825,8 @@ async function larkCliStatus(ctx: CommandContext): Promise<'app' | 'user-ready' 
     };
     const app = raw.apps?.find(
       (candidate) =>
-        candidate.appId === ctx.controls.profileConfig.accounts.app.id &&
-        candidate.brand === ctx.controls.profileConfig.accounts.app.tenant,
+        candidate.appId === larkApp.id &&
+        candidate.brand === larkApp.tenant,
     );
     if (app?.defaultAs === 'auto' && app.strictMode === 'off' && hasStructuredLarkCliUserAuth(app.users)) {
       return 'user-ready';
@@ -833,7 +868,7 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     scope: ctx.scope,
     chatMode: ctx.chatMode,
   });
-  await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
+  await ctx.channel.send(ctx.msg.chatId, { kind: 'card', card }, commandReplyOptions(ctx));
 }
 
 function formatOwnerState(ctx: CommandContext): string {
@@ -1203,36 +1238,35 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
   try {
     if (isP2p) {
       // Streaming card path — operator is the only viewer in p2p.
-      await ctx.channel.stream(
+      await ctx.channel.openStream(
         ctx.msg.chatId,
         {
-          card: {
-            initial: renderCard(withDoctorReport(initialState, doctorReport('pending'))),
-            producer: async (ctrl) => {
-              let state: RunState = initialState;
-              let echoText = '';
-              const echoStatus = (): string => formatDoctorEchoStatus(echoText, state);
-              const flush = (): Promise<void> =>
-                ctrl.update(renderCard(withDoctorReport(state, doctorReport(echoStatus()))));
-              for await (const evt of execution.subscribe()) {
-                if (execution.handle.interrupted) break;
-                // /doctor runs are session-less: skip 'system' so we don't
-                // persist a doctor's sessionId over the user's real session.
-                if (evt.type === 'system') continue;
-                if (evt.type === 'usage') {
-                  continue;
-                }
-                if (evt.type === 'text') echoText += evt.delta;
-                if (evt.type === 'final_text') echoText = evt.content;
-                state = reduce(state, evt);
-                await flush();
-                // Don't wait for stdout to close — some claude versions hang
-                // briefly post-result, which would leave the for-await stuck.
-                if (state.terminal !== 'running') break;
+          mode: 'card',
+          initialCard: renderCard(withDoctorReport(initialState, doctorReport('pending'))),
+          produce: async (ctrl) => {
+            let state: RunState = initialState;
+            let echoText = '';
+            const echoStatus = (): string => formatDoctorEchoStatus(echoText, state);
+            const flush = (): Promise<void> =>
+              ctrl.updateCard(renderCard(withDoctorReport(state, doctorReport(echoStatus()))));
+            for await (const evt of execution.subscribe()) {
+              if (execution.handle.interrupted) break;
+              // /doctor runs are session-less: skip 'system' so we don't
+              // persist a doctor's sessionId over the user's real session.
+              if (evt.type === 'system') continue;
+              if (evt.type === 'usage') {
+                continue;
               }
-              state = execution.handle.interrupted ? markInterrupted(state) : finalizeIfRunning(state);
+              if (evt.type === 'text') echoText += evt.delta;
+              if (evt.type === 'final_text') echoText = evt.content;
+              state = reduce(state, evt);
               await flush();
-            },
+              // Don't wait for stdout to close — some claude versions hang
+              // briefly post-result, which would leave the for-await stuck.
+              if (state.terminal !== 'running') break;
+            }
+            state = execution.handle.interrupted ? markInterrupted(state) : finalizeIfRunning(state);
+            await flush();
           },
         },
         { replyTo: ctx.msg.messageId },
@@ -1259,6 +1293,7 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
       // user's p2p chat with the bot (auto-creates it if needed); other
       // group members never see this payload.
       await ctx.channel.send(ctx.msg.senderId, {
+        kind: 'card',
         card: renderCard(
           withDoctorReport(state, doctorReport(formatDoctorEchoStatus(echoText, state))),
         ),
@@ -1329,20 +1364,22 @@ function formatDoctorEchoStatus(echoText: string, state: RunState): string {
 
 async function handleHelp(_args: string, ctx: CommandContext): Promise<void> {
   const card = helpCard(ctx.agent.displayName);
-  await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
+  await ctx.channel.send(ctx.msg.chatId, { kind: 'card', card }, commandReplyOptions(ctx));
 }
 
 // ─── /account ─────────────────────────────────────────────────────────────
 
 async function handleAccount(args: string, ctx: CommandContext): Promise<void> {
+  const lark = await requireLarkChannel(ctx, 'managedCards', 'appCredentials');
+  if (!lark) return;
   const sub = args.trim().split(/\s+/)[0] ?? '';
   switch (sub) {
     case '':
       return showCurrent(ctx);
     case 'change':
-      return showForm(ctx);
+      return showForm(ctx, lark);
     case 'submit':
-      return submitAccount(ctx);
+      return submitAccount(ctx, lark);
     case 'cancel':
       return cancelAccount(ctx);
     default:
@@ -1356,18 +1393,18 @@ async function showCurrent(ctx: CommandContext): Promise<void> {
   // never re-touch).
   const card = accountCurrentCard({
     appId: ctx.controls.cfg.accounts.app.id,
-    botName: ctx.channel.botIdentity?.name,
+    botName: ctx.channel.identity?.name,
     tenant: ctx.controls.cfg.accounts.app.tenant,
   });
-  await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
+  await ctx.channel.send(ctx.msg.chatId, { kind: 'card', card }, commandReplyOptions(ctx));
 }
 
-async function showForm(ctx: CommandContext): Promise<void> {
+async function showForm(ctx: CommandContext, lark: LarkChannel): Promise<void> {
   const card = accountFormCard({ initialTenant: ctx.controls.cfg.accounts.app.tenant });
   if (ctx.fromCardAction) {
     await recallMessage(ctx, ctx.msg.messageId);
   }
-  await sendManagedCard(ctx.channel, ctx.msg.chatId, card, commandReplyOptions(ctx));
+  await sendManagedCard(lark, ctx.msg.chatId, card, commandReplyOptions(ctx));
 }
 
 async function cancelAccount(ctx: CommandContext): Promise<void> {
@@ -1382,14 +1419,14 @@ async function cancelAccount(ctx: CommandContext): Promise<void> {
 // that and the update gets reverted to the form's pre-submit state.
 const FORM_SETTLE_MS = 1000;
 
-async function submitAccount(ctx: CommandContext): Promise<void> {
+async function submitAccount(ctx: CommandContext, lark: LarkChannel): Promise<void> {
   const fv = ctx.formValue ?? {};
   const appId = String(fv.app_id ?? '').trim();
   const appSecret = String(fv.app_secret ?? '').trim();
   const tenant = (fv.tenant === 'lark' ? 'lark' : 'feishu') as TenantBrand;
 
   const formMsgId = ctx.msg.messageId;
-  const channel = ctx.channel;
+  const channel = lark;
   const restart = ctx.controls.restart;
   const retryReplyOptions = commandReplyOptions(ctx);
 
@@ -1488,7 +1525,7 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
 
 async function recallMessage(ctx: CommandContext, messageId: string): Promise<void> {
   try {
-    await ctx.channel.recallMessage(messageId);
+    await ctx.channel.recall(messageId);
   } catch (err) {
     console.warn('[recall failed]', err);
   }
@@ -1500,10 +1537,12 @@ async function handleInvite(args: string, ctx: CommandContext): Promise<void> {
   const tokens = args.trim().split(/\s+/).filter(Boolean).map((token) => token.toLowerCase());
 
   if (tokens.includes('all') && tokens.includes('group')) {
+    const lark = await requireLarkChannel(ctx, 'chatManagement');
+    if (!lark) return;
     const list = new Set(ctx.controls.profileConfig.access.allowedChats);
     let knownChats = ctx.controls.knownChats ?? [];
     if (knownChats.length === 0) {
-      knownChats = await fetchKnownChats(ctx.channel);
+      knownChats = await fetchKnownChats(lark);
       ctx.controls.knownChats = knownChats;
     }
     let added = 0;
@@ -1703,23 +1742,25 @@ async function saveAccessConfig(
 // ────────────── /config — preferences form ──────────────
 
 async function handleConfig(args: string, ctx: CommandContext): Promise<void> {
+  const lark = await requireLarkChannel(ctx, 'managedCards', 'chatManagement', 'appCredentials');
+  if (!lark) return;
   const sub = args.trim().split(/\s+/)[0] ?? '';
   switch (sub) {
     case '':
-      return showConfigForm(ctx);
+      return showConfigForm(ctx, lark);
     case 'submit':
-      return submitConfig(ctx);
+      return submitConfig(ctx, lark);
     case 'cancel':
-      return cancelConfig(ctx);
+      return cancelConfig(ctx, lark);
     default:
       await reply(ctx, '用法:`/config`');
   }
 }
 
-async function showConfigForm(ctx: CommandContext): Promise<void> {
+async function showConfigForm(ctx: CommandContext, lark: LarkChannel): Promise<void> {
   await Promise.all([
-    ctx.controls.refreshOwner(ctx.channel).catch(() => {}),
-    fetchKnownChats(ctx.channel)
+    ctx.controls.refreshOwner(lark).catch(() => {}),
+    fetchKnownChats(lark)
       .then((chats) => {
         if (chats.length > 0) ctx.controls.knownChats = chats;
       })
@@ -1754,19 +1795,20 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     ...(consoleUrl ? { consoleUrl } : {}),
   });
   if (ctx.fromCardAction) await recallMessage(ctx, ctx.msg.messageId);
-  await sendManagedCard(ctx.channel, ctx.msg.chatId, card, commandReplyOptions(ctx));
+  await sendManagedCard(lark, ctx.msg.chatId, card, commandReplyOptions(ctx));
 }
 
 async function showResultCardInPlace(
   ctx: CommandContext,
+  lark: LarkChannel,
   formMsgId: string,
   card: object,
 ): Promise<void> {
   try {
-    await updateManagedCard(ctx.channel, formMsgId, card);
+    await updateManagedCard(lark, formMsgId, card);
   } catch (err) {
     log.warn('command', 'config-card-update-fallback', { err: String(err) });
-    await sendManagedCard(ctx.channel, ctx.msg.chatId, card, commandReplyOptions(ctx)).catch((fallbackErr) =>
+    await sendManagedCard(lark, ctx.msg.chatId, card, commandReplyOptions(ctx)).catch((fallbackErr) =>
       log.warn('command', 'config-card-fallback-send-failed', {
         err: String(fallbackErr),
       }),
@@ -1775,17 +1817,17 @@ async function showResultCardInPlace(
   forgetManagedCard(formMsgId);
 }
 
-async function cancelConfig(ctx: CommandContext): Promise<void> {
+async function cancelConfig(ctx: CommandContext, lark: LarkChannel): Promise<void> {
   if (ctx.fromCardAction) {
     const formMsgId = ctx.msg.messageId;
     void (async () => {
       await new Promise((r) => setTimeout(r, FORM_SETTLE_MS));
-      await showResultCardInPlace(ctx, formMsgId, configCancelledCard());
+      await showResultCardInPlace(ctx, lark, formMsgId, configCancelledCard());
     })();
   }
 }
 
-async function submitConfig(ctx: CommandContext): Promise<void> {
+async function submitConfig(ctx: CommandContext, lark: LarkChannel): Promise<void> {
   const fv = ctx.formValue ?? {};
   const rawReply = String(fv.message_reply ?? '').trim();
   const messageReply: MessageReplyMode =
@@ -1926,6 +1968,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       await waitForSettle();
       await showResultCardInPlace(
         ctx,
+        lark,
         formMsgId,
         configFailedCard(configFailureMessage(failureStep, rollbackFailed, larkCliPolicyApplied)),
       );
@@ -1948,6 +1991,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
     await waitForSettle();
     await showResultCardInPlace(
       ctx,
+      lark,
       formMsgId,
       configSavedCard({
         agentKind,
@@ -1971,7 +2015,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
     // group messages (`im:message.group_msg`). When the user opts in, verify
     // the scope and, if missing, push a one-click re-authorization link.
     if (!requireMentionInGroup) {
-      await promptGroupMsgScopeIfMissing(ctx);
+      await promptGroupMsgScopeIfMissing(ctx, lark);
     }
   })();
 }
@@ -1983,10 +2027,14 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
  * authorizing, swap the card to a success state in place. Best-effort — any
  * failure here is logged and swallowed (the saved-config card already showed).
  */
-async function promptGroupMsgScopeIfMissing(ctx: CommandContext): Promise<void> {
+async function promptGroupMsgScopeIfMissing(
+  ctx: CommandContext,
+  lark: LarkChannel,
+): Promise<void> {
+  if (!supportsFeature(ctx.channel, 'appCredentials')) return;
   const appId = ctx.controls.cfg.accounts.app.id;
   // `false` = confirmed missing; `null` = lookup failed → don't nag.
-  const has = await hasGroupMsgScope(ctx.channel, appId);
+  const has = await hasGroupMsgScope(lark, appId);
   if (has !== false) return;
   log.info('command', 'group-msg-scope-missing', { appId });
 
@@ -2002,7 +2050,7 @@ async function promptGroupMsgScopeIfMissing(ctx: CommandContext): Promise<void> 
   let sent;
   try {
     sent = await sendManagedCard(
-      ctx.channel,
+      lark,
       ctx.msg.chatId,
       groupMsgScopeGrantCard(link.url, expireMins),
     );
@@ -2016,7 +2064,7 @@ async function promptGroupMsgScopeIfMissing(ctx: CommandContext): Promise<void> 
   void link.completion.then(
     async () => {
       log.info('command', 'group-msg-scope-granted', { appId });
-      await updateManagedCard(ctx.channel, sent.messageId, groupMsgScopeGrantedCard()).catch(
+      await updateManagedCard(lark, sent.messageId, groupMsgScopeGrantedCard()).catch(
         () => {},
       );
       forgetManagedCard(sent.messageId);
@@ -2087,6 +2135,8 @@ async function savePreferencesConfig(
  * agent a question with the meeting transcript as context.
  */
 async function handleMeeting(args: string, ctx: CommandContext): Promise<void> {
+  const lark = await requireLarkChannel(ctx, 'meetings');
+  if (!lark) return;
   const parts = args.trim().split(/\s+/).filter(Boolean);
   const sub = parts[0] ?? '';
   const rest = parts.slice(1).join(' ');
@@ -2205,7 +2255,7 @@ async function handleMeeting(args: string, ctx: CommandContext): Promise<void> {
         const answer = await answerInMeeting(
           {
             session,
-            channel: ctx.channel,
+            channel: lark,
             controls: ctx.controls,
             executor: ctx.runExecutor,
             activeRuns: ctx.activeRuns,

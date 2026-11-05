@@ -2,7 +2,11 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
+import {
+  createDefaultProfileConfig,
+  requireLarkProfile,
+  type LarkProfileConfig,
+} from '../../../src/config/profile-schema.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
@@ -476,26 +480,28 @@ async function createHarness(options: {
   agent: FakeAgentAdapter;
   sessions: SessionStore;
   workspaces: WorkspaceStore;
-  profileConfig: ReturnType<typeof createDefaultProfileConfig>;
+  profileConfig: LarkProfileConfig;
   controls: ReturnType<typeof createControls>;
 }> {
   const tmp = await createTmpProfile('topic-quote-');
   const workspace = await realpath(tmp.workspace);
-  const baseProfileConfig = createDefaultProfileConfig({
-    agentKind: 'claude',
-    accounts: {
-      app: {
-        id: 'cli_test',
-        secret: 'secret',
-        tenant: 'feishu',
+  const baseProfileConfig = requireLarkProfile(
+    createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: {
+        app: {
+          id: 'cli_test',
+          secret: 'secret',
+          tenant: 'feishu',
+        },
       },
-    },
-    access: {
-      allowedChats: ['oc_topic_chat'],
-      allowedUsers: ['ou_user'],
-    },
-  });
-  const profileConfig = {
+      access: {
+        allowedChats: ['oc_topic_chat'],
+        allowedUsers: ['ou_user'],
+      },
+    }),
+  );
+  const profileConfig: LarkProfileConfig = {
     ...baseProfileConfig,
     workspaces: {
       ...baseProfileConfig.workspaces,
@@ -526,7 +532,7 @@ async function createHarness(options: {
 }
 
 async function startTestBridge(h: {
-  profileConfig: ReturnType<typeof createDefaultProfileConfig>;
+  profileConfig: LarkProfileConfig;
   agent: FakeAgentAdapter;
   sessions: SessionStore;
   workspaces: WorkspaceStore;
@@ -618,7 +624,7 @@ function createFakeLarkChannel(options: {
   };
 }
 
-function createControls(profileConfig: ReturnType<typeof createDefaultProfileConfig>) {
+function createControls(profileConfig: LarkProfileConfig) {
   return {
     profile: 'test',
     profileConfig,
