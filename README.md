@@ -1,4 +1,4 @@
-# lark-coding-agent-bridge-dsh
+# im-agent-bridge
 
 A fork of [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge)
 that adds **DeepSeek Harness (DSH)** as a third local coding-agent backend, alongside Claude Code and
@@ -97,8 +97,8 @@ Claude Code and Codex CLI remain fully supported; you need at least one agent in
 This fork is not published to npm, so build it from source:
 
 ```bash
-git clone https://github.com/rovertang/lark-coding-agent-bridge-dsh.git
-cd lark-coding-agent-bridge-dsh
+git clone https://github.com/rovertang/im-agent-bridge.git
+cd im-agent-bridge
 pnpm install
 pnpm build
 ```
@@ -539,7 +539,7 @@ This fork is maintained by **RoverTang**.
 - GitHub: [@rovertang](https://github.com/rovertang)
 
 Issues and pull requests about the DeepSeek Harness backend are welcome on
-[this fork](https://github.com/rovertang/lark-coding-agent-bridge-dsh/issues). For anything about the
+[this fork](https://github.com/rovertang/im-agent-bridge/issues). For anything about the
 original bridge itself, please use the
 [upstream project](https://github.com/zarazhangrui/lark-coding-agent-bridge/issues).
 

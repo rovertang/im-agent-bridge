@@ -29,4 +29,4 @@
 
 - 默认从 `main` 拉分支：`feat/*`、`fix/*`、`chore/*`。
 - 推送前跑 `pnpm ci:local`（规则检查 + 测试 + 类型检查 + 构建）。
-- 只推送到 `origin`（`rovertang/lark-coding-agent-bridge-dsh`）。
+- 只推送到 `origin`（`rovertang/im-agent-bridge`）。

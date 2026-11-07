@@ -10,12 +10,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rovertang/lark-coding-agent-bridge-dsh.git"
+    "url": "git+https://github.com/rovertang/im-agent-bridge.git"
   },
   "bugs": {
-    "url": "https://github.com/rovertang/lark-coding-agent-bridge-dsh/issues"
+    "url": "https://github.com/rovertang/im-agent-bridge/issues"
   },
-  "homepage": "https://github.com/rovertang/lark-coding-agent-bridge-dsh#readme",
+  "homepage": "https://github.com/rovertang/im-agent-bridge#readme",
   "bin": {
     "lark-channel-bridge": "./bin/lark-channel-bridge.mjs"
   },

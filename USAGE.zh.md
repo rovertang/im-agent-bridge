@@ -8,7 +8,7 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/rovertang/lark-coding-agent-bridge-dsh.git && cd lark-coding-agent-bridge-dsh
+git clone https://github.com/rovertang/im-agent-bridge.git && cd im-agent-bridge
 pnpm install && pnpm build && npm link        # 或始终用 node bin/lark-channel-bridge.mjs
 
 # 飞书：扫码建应用（或加 --app-id），然后前台跑起来
@@ -192,8 +192,8 @@ dsh --profile headless \
 | 服务托管 | macOS launchd、Linux systemd 用户单元、Windows 计划任务 |
 
 ```bash
-git clone https://github.com/rovertang/lark-coding-agent-bridge-dsh.git
-cd lark-coding-agent-bridge-dsh
+git clone https://github.com/rovertang/im-agent-bridge.git
+cd im-agent-bridge
 pnpm install
 pnpm build
 npm link        # 可选；不做全局安装时用 node bin/lark-channel-bridge.mjs <cmd>

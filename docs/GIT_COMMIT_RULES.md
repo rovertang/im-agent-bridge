@@ -83,7 +83,7 @@ pnpm hooks:check       # 检查是否安装就绪
 
 ### 3.5 推送目标白名单（error）
 
-`pre-push` 只允许推送到 `origin`（本仓库 `rovertang/lark-coding-agent-bridge-dsh`）。
+`pre-push` 只允许推送到 `origin`（本仓库 `rovertang/im-agent-bridge`）。
 `upstream`（`zarazhangrui/lark-coding-agent-bridge`）**是只读上游**，禁止推送。
 如需推送到其他 fork，请在 `.gitguardignore` 中用 `remote:<正则>` 显式登记。
 

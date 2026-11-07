@@ -1,4 +1,4 @@
-# lark-coding-agent-bridge-dsh
+# im-agent-bridge
 
 [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge) 的 fork，
 新增 **DeepSeek Harness（DSH）** 作为第三种本机编程助手后端，与 Claude Code、Codex CLI 并列。
@@ -89,8 +89,8 @@ Claude Code 和 Codex CLI 仍然完整支持；至少安装并登录一个 agent
 本 fork 没有发布到 npm，需要从源码构建：
 
 ```bash
-git clone https://github.com/rovertang/lark-coding-agent-bridge-dsh.git
-cd lark-coding-agent-bridge-dsh
+git clone https://github.com/rovertang/im-agent-bridge.git
+cd im-agent-bridge
 pnpm install
 pnpm build
 ```
@@ -502,7 +502,7 @@ pnpm test:process -- dsh-live
 - GitHub：[@rovertang](https://github.com/rovertang)
 
 与 DeepSeek Harness 后端相关的问题和 PR，欢迎提到
-[本 fork](https://github.com/rovertang/lark-coding-agent-bridge-dsh/issues)。如果是 bridge 本身的问题，
+[本 fork](https://github.com/rovertang/im-agent-bridge/issues)。如果是 bridge 本身的问题，
 请提到[上游项目](https://github.com/zarazhangrui/lark-coding-agent-bridge/issues)。
 
 ## 许可

@@ -100,7 +100,7 @@ export class WeixinApiError extends Error {
 export function buildWeixinBaseInfo(overrides?: BaseInfo): BaseInfo {
   return {
     channel_version: WEIXIN_CHANNEL_VERSION,
-    bot_agent: 'lark-coding-agent-bridge',
+    bot_agent: 'im-agent-bridge',
     ...overrides,
   };
 }
