@@ -89,6 +89,8 @@ CLI → resolveProfileRuntime()   # 解析 profile、迁移旧配置、补默认
   纯文本、COT 过程气泡。停止按钮、`/config` 表单、`/invite` 选择器都依赖卡片能力。
 - **lark-cli**：每个 profile 有独立配置目录，agent 进程通过 `LARKSUITE_CLI_CONFIG_DIR` 指向它；身份策略
   默认 `bot-only`，可在 `/config` 切到 `user-default`。文档评论、视频会议、附件也只在飞书侧实现。
+- **云文档评论**：云文档评论按文档权限生效：不需要单独的 workspace 绑定或文档白名单；在支持的文档评论里
+  @bot，即可在同一线程内回复。
 
 ### 2.3 微信通路（iLink）
 
@@ -294,6 +296,7 @@ lark-channel-bridge profile list                       # ACTIVE / PROFILE / CHAN
 lark-channel-bridge profile use wx                     # 切换默认 profile
 lark-channel-bridge profile remove old --purge --yes   # 默认归档；--purge --yes 彻底删除
 lark-channel-bridge profile export wx --output ./wx-profile.json
+lark-channel-bridge profile export wx --include-secrets --yes   # 连同敏感配置一起导出
 ```
 
 - `profile list` 的 `CHANNEL` 列显示 `lark` 或 `weixin`，`STATUS` 显示运行中的 pid/agent。
@@ -383,8 +386,19 @@ lark-channel-bridge profile export wx --output ./wx-profile.json
 | `read-only` | `read-only` | `plan` | `read-only` |
 
 - 配置键是 `permissions.defaultAccess` / `permissions.maxAccess`；新建 profile 两者默认 `full`（保证本地工具、
-  授权流程、文件写入完整可用）。旧配置的 `sandbox` 字段仍可读，保存时迁移到 `permissions`。
+  授权流程、文件写入完整可用）。旧版 `sandbox` 字段仍可读，保存时迁移到 `permissions`。
 - 取值超出词汇表会直接报错，而不是悄悄放宽权限。
+
+推荐的 profile 配置（这是字段片段，不要整份替换 `config.json`，只改对应 profile 的 `permissions`）：
+
+```json
+{
+  "permissions": {
+    "defaultAccess": "full",
+    "maxAccess": "full"
+  }
+}
+```
 
 安全建议：
 
