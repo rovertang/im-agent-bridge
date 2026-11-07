@@ -1,13 +1,21 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
-describe('README runtime contract', () => {
+/**
+ * Documentation contract.
+ *
+ * The README is the short, bilingual entry point; the detailed runtime
+ * surfaces (commands, permissions, lark-cli, profiles, …) live in the usage
+ * manual `USAGE.zh.md`. These assertions keep the split honest: if a surface
+ * disappears from the manual, it has to be removed from this list deliberately.
+ */
+describe('documentation runtime contract', () => {
   it('documents maintained runtime surfaces in user-visible docs', async () => {
-    const docs = await readDocs();
+    const { all } = await readDocs();
 
     for (const phrase of [
-      'per-profile service',
       'workspaces.default',
+      'start/stop/restart/status/unregister',
       '/invite user',
       '/remove user',
       '/invite group',
@@ -19,15 +27,13 @@ describe('README runtime contract', () => {
       'profile remove',
       '--purge --yes',
       '--include-secrets --yes',
-      'lark-cli identity policy',
-      'profile-local lark-cli directory',
       'lark-cli 身份策略',
       '当前 profile 的 lark-cli 目录',
       'pnpm test',
       'pnpm typecheck',
       'pnpm build',
     ]) {
-      expect(docs).toContain(phrase);
+      expect(all).toContain(phrase);
     }
   });
 
@@ -46,7 +52,7 @@ describe('README runtime contract', () => {
   });
 
   it('does not document trusted or allowed directory authorization', async () => {
-    const docs = await readDocs();
+    const { all } = await readDocs();
 
     for (const phrase of [
       '允许访问目录',
@@ -60,43 +66,42 @@ describe('README runtime contract', () => {
       'trusted directory',
       'safe directory',
     ]) {
-      expect(docs).not.toContain(phrase);
+      expect(all).not.toContain(phrase);
     }
   });
 
   it('documents access control commands instead of config-only access management', async () => {
-    const docs = await readDocs();
+    const { all } = await readDocs();
 
-    expect(docs).not.toContain('`/config` only adjusts presentation preferences. Manage access in the profile config.');
-    expect(docs).not.toContain('`/config` 只调整展示偏好，不再维护访问名单。请在 profile config 里维护。');
+    expect(all).not.toContain('`/config` only adjusts presentation preferences. Manage access in the profile config.');
+    expect(all).not.toContain('`/config` 只调整展示偏好，不再维护访问名单。请在 profile config 里维护。');
   });
 
   it('documents cloud-doc comments as document-scoped instead of access-gated', async () => {
-    const docs = await readDocs();
+    const { all, usage } = await readDocs();
 
-    expect(docs).toContain('Cloud-doc comments are document-scoped');
-    expect(docs).toContain('云文档评论按文档权限生效');
-    expect(docs).not.toContain('comments.enabled');
-    expect(docs).not.toContain('comments.rateLimit');
-    expect(docs).not.toContain('/doc ws bind');
+    expect(usage).toContain('云文档评论按文档权限生效');
+    expect(all).not.toContain('comments.enabled');
+    expect(all).not.toContain('comments.rateLimit');
+    expect(all).not.toContain('/doc ws bind');
   });
 
   it('documents canonical permissions instead of recommending legacy sandbox config', async () => {
-    const docs = await readDocs();
+    const { all, usage } = await readDocs();
 
-    expect(docs).toContain('"permissions"');
-    expect(docs).toContain('"defaultAccess": "full"');
-    expect(docs).toContain('"maxAccess": "full"');
-    expect(docs).toContain('legacy `sandbox`');
-    expect(docs).toContain('旧版 `sandbox`');
-    expect(docs).not.toContain('"sandbox"');
+    expect(usage).toContain('"permissions"');
+    expect(usage).toContain('"defaultAccess": "full"');
+    expect(usage).toContain('"maxAccess": "full"');
+    expect(usage).toContain('旧版 `sandbox`');
+    expect(all).not.toContain('"sandbox"');
   });
 });
 
-async function readDocs(): Promise<string> {
-  const [en, zh] = await Promise.all([
+async function readDocs(): Promise<{ all: string; usage: string }> {
+  const [en, zh, usage] = await Promise.all([
     readFile(new URL('../../../README.md', import.meta.url), 'utf8'),
     readFile(new URL('../../../README.zh.md', import.meta.url), 'utf8'),
+    readFile(new URL('../../../USAGE.zh.md', import.meta.url), 'utf8'),
   ]);
-  return `${en}\n${zh}`;
+  return { all: `${en}\n${zh}\n${usage}`, usage };
 }
